@@ -176,6 +176,18 @@ struct AllTimeAggregator {
 
                 // Max PF, Max Off, Max Def from optimal lineup (using historical roster that week)
                 let maxes = computeMaxForEntry(entry: entry, lineupConfig: team.lineupConfig ?? [:], playerCache: playerCache)
+                let players = entry.players ?? []
+                let playersPoints = entry.players_points ?? [:]
+
+                // Build candidates from players in entry.players (i.e., historical roster for that week)
+                let candidates: [(id: String, basePos: String, fantasy: [String], points: Double)] = players.compactMap { id in
+                    guard let points = playersPoints[id],
+                          let raw = playerCache[id],
+                          let basePos = raw.position else { return nil }
+                    let fantasy = raw.fantasy_positions ?? [basePos]
+                    return (id: id, basePos: basePos, fantasy: fantasy, points: points)
+                }
+                
                 totalMaxPF += maxes.total
                 totalMaxOffPF += maxes.off
                 totalMaxDefPF += maxes.def

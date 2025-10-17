@@ -554,7 +554,7 @@ struct MatchupView: View {
             let grouped = Dictionary(grouping: h2hMatchups, by: { $0.matchupId })
             for (_, group) in grouped {
                 guard group.count == 2 else { continue }
-                let entries = group.sorted { $0.rosterId == uRid }
+                let entries = group.sorted { ($0.rosterId == uRid ? 0 : 1) < ($1.rosterId == uRid ? 0 : 1) }
                 let uEntry = entries.first(where: { $0.rosterId == uRid })
                 let oEntry = entries.first(where: { $0.rosterId == oRid })
                 guard let uPts = uEntry?.points, let oPts = oEntry?.points else { continue }
