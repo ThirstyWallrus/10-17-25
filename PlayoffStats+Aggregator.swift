@@ -1,0 +1,296 @@
+//
+//  PlayoffStats+Aggregator.swift
+//
+
+import Foundation
+
+private let offensivePositions: Set<String> = ["QB", "RB", "WR", "TE", "K"]
+private let defensivePositions: Set<String> = ["DL", "LB", "DB"]
+
+private func isOffensiveSlot(_ slot: String) -> Bool {
+    let u = slot.uppercased()
+    let defSlots: Set<String> = ["DL", "LB", "DB", "IDP", "DEF"]
+    return !defSlots.contains(u)
+}
+
+// MARK: - Main Bracket Playoff Matchup Helper
+private func mainBracketPlayoffMatchups(
+    for ownerId: String,
+    in season: SeasonData,
+    matchups: [SleeperMatchup]
+) -> [SleeperMatchup] {
+    guard let team = season.teams.first(where: { $0.ownerId == ownerId }),
+          let playoffTeamsCount = season.playoffTeamsCount,
+          let playoffStartWeek = season.playoffStartWeek else {
+        return []
+    }
+    let playoffSeededTeams = season.teams
+        .sorted { $0.leagueStanding < $1.leagueStanding }
+        .prefix(playoffTeamsCount)
+        .compactMap { Int($0.id) }
+    let teamRosterId = Int(team.id) ?? -1
+
+    // Number of rounds (ceil log2 for cases with byes)
+    let rounds = Int(ceil(log2(Double(playoffTeamsCount))))
+    let playoffWeeks = Set(playoffStartWeek..<(playoffStartWeek + rounds))
+
+    var result: [SleeperMatchup] = []
+    var eliminated = false
+
+    // Updated for correct SleeperMatchup model
+    let candidateMatchups = matchups
+        .filter { playoffWeeks.contains($0.matchupId) } // Use matchupId as week proxy if week not present
+        .filter { $0.rosterId == teamRosterId || ($0.starters.contains { _ in true }) }
+        // NOTE: if your SleeperMatchup model has a `week` property, you should use that instead of matchupId above
+
+    // If your SleeperMatchup has a `week` property, replace $0.matchupId with $0.week in the above filter
+
+    // Sorting by matchupId as a proxy for week (update if you add a `week` property)
+    let sortedMatchups = candidateMatchups.sorted { $0.matchupId < $1.matchupId }
+
+    for matchup in sortedMatchups {
+        if eliminated { break }
+        result.append(matchup)
+        // WIN/LOSS detection --
+        // If you have points as a Double (not [Double]), use direct comparison
+        let myPoints = matchup.points
+        let oppPoints = matchup.customPoints ?? 0.0 // Use customPoints if present, or 0 as placeholder
+        if myPoints < oppPoints { eliminated = true }
+    }
+    return result
+}
+
+extension PlayoffStats {
+    static func aggregate(
+        ownerId: String,
+        league: LeagueData,
+        allMatchups: [SleeperMatchup],
+        playoffStartWeekDefault: Int = 14,
+        playerCache: [String: RawSleeperPlayer]
+    ) -> PlayoffStats {
+        var pointsFor = 0.0
+        var maxPointsFor = 0.0
+        var offensivePointsFor = 0.0
+        var maxOffensivePointsFor = 0.0
+        var defensivePointsFor = 0.0
+        var maxDefensivePointsFor = 0.0
+        var gamesPlayed = 0
+        var wins = 0
+        var losses = 0
+        var isChampion = false
+
+        for season in league.seasons {
+            guard let team = season.teams.first(where: { $0.ownerId == ownerId }) else { continue }
+            let playoffTeamsCount = season.playoffTeamsCount ?? 4
+            let playoffSeededTeams = season.teams.sorted { $0.leagueStanding < $1.leagueStanding }
+                .prefix(playoffTeamsCount)
+            guard playoffSeededTeams.contains(where: { $0.ownerId == ownerId }) else { continue }
+
+            // Determine playoff start week as before
+            let allWeeks = team.weeklyActualLineupPoints?.keys.sorted() ?? []
+            let maxWeek = allWeeks.max() ?? 13
+            let assumedPlayoffRounds = Int(log2(Double(playoffTeamsCount)))
+            let fallbackPlayoffStartWeek = maxWeek - (assumedPlayoffRounds - 1)
+            _ = season.playoffStartWeek ?? fallbackPlayoffStartWeek
+
+            let lineupConfig = team.lineupConfig ?? [:]
+            var expandedSlots: [String] = []
+            for (key, value) in lineupConfig {
+                expandedSlots.append(contentsOf: Array(repeating: key, count: value))
+            }
+
+            let teamRosterId = Int(team.id) ?? -1
+
+            // --- PATCH: Use only main bracket playoff games for this team/season ---
+            let seasonMatchups = mainBracketPlayoffMatchups(
+                for: ownerId,
+                in: season,
+                matchups: allMatchups
+            )
+
+            // Sorting by matchupId as a proxy for week (update if you add a `week` property)
+            let playoffMatchups = seasonMatchups.sorted { $0.matchupId < $1.matchupId }
+
+            var eliminated = false // Defensive, but already handled in helper
+
+            for matchup in playoffMatchups {
+                // If already eliminated, skip further games
+                if eliminated { break }
+
+                // Use matchupId as a proxy for week (replace with matchup.week if available)
+                let week = matchup.matchupId
+
+                // Fetch myEntry
+                let weekMatchups = season.matchupsByWeek?[week] ?? []
+                guard let myEntry = weekMatchups.first(where: { $0.roster_id == teamRosterId }) else { continue }
+
+                // Points for (total)
+                let pf = myEntry.points ?? 0.0
+                pointsFor += pf
+                gamesPlayed += 1
+
+                // Compute opf and dpf using slots primarily
+                guard let starters = myEntry.starters,
+                      let playersPoints = myEntry.players_points else { continue }
+                let starterPoints: [Double] = starters.compactMap { playersPoints[$0] }
+                guard starters.count == starterPoints.count else { continue }
+
+                var opf = 0.0
+                var dpf = 0.0
+                let slots = expandedSlots
+                if slots.count == starters.count {
+                    for i in 0..<starters.count {
+                        let pts = starterPoints[i]
+                        if isOffensiveSlot(slots[i]) {
+                            opf += pts
+                        } else {
+                            dpf += pts
+                        }
+                    }
+                } else {
+                    // Fallback to position
+                    for i in 0..<starters.count {
+                        let pid = starters[i]
+                        let pts = starterPoints[i]
+                        let player: Player? = {
+                            if let rawPlayer = playerCache[pid], let pos = rawPlayer.position {
+                                // Map from RawSleeperPlayer to Player model
+                                return Player(
+                                    id: pid,
+                                    position: pos,
+                                    altPositions: rawPlayer.fantasy_positions,
+                                    weeklyScores: []
+                                )
+                            }
+                            return team.roster.first { $0.id == pid }
+                        }()
+                        if let pos = player?.position.uppercased() {
+                            if offensivePositions.contains(pos) {
+                                opf += pts
+                            } else if defensivePositions.contains(pos) {
+                                dpf += pts
+                            }
+                        }
+                    }
+                }
+                offensivePointsFor += opf
+                defensivePointsFor += dpf
+
+                // --- OPTIMALS ---
+                let candidates: [(
+                    id: String,
+                    basePos: String,
+                    altPositions: [String],
+                    points: Double
+                )] = team.roster.compactMap { player in
+                    guard let ws = player.weeklyScores.first(where: { $0.week == week }) else { return nil }
+                    return (
+                        id: player.id,
+                        basePos: player.position,
+                        altPositions: player.altPositions ?? [],
+                        points: ws.points_half_ppr ?? ws.points
+                    )
+                }
+                var usedPlayerIDs = Set<String>()
+                var weekMaxTotal = 0.0
+                var weekMaxOff = 0.0
+                var weekMaxDef = 0.0
+
+                for slot in slots {
+                    let allowed: Set<String>
+                    switch slot.uppercased() {
+                        case "QB", "RB", "WR", "TE", "K", "DL", "LB", "DB": allowed = [slot.uppercased()]
+                        case "FLEX", "WRRB", "WRRBTE", "WRRB_TE", "RBWR", "RBWRTE": allowed = ["RB", "WR", "TE"]
+                        case "SUPER_FLEX", "QBRBWRTE", "QBRBWR", "QBSF", "SFLX": allowed = ["QB", "RB", "WR", "TE"]
+                        case "IDP": allowed = ["DL", "LB", "DB"]
+                        default: allowed = [slot.uppercased()]
+                    }
+                    let pick = candidates
+                        .filter { !usedPlayerIDs.contains($0.id) && (allowed.contains($0.basePos) || !$0.altPositions.filter { allowed.contains($0) }.isEmpty) }
+                        .max(by: { $0.points < $1.points })
+                    guard let cand = pick else { continue }
+                    usedPlayerIDs.insert(cand.id)
+                    weekMaxTotal += cand.points
+                    if isOffensiveSlot(slot) {
+                        weekMaxOff += cand.points
+                    } else {
+                        weekMaxDef += cand.points
+                    }
+                }
+                maxPointsFor += weekMaxTotal
+                maxOffensivePointsFor += weekMaxOff
+                maxDefensivePointsFor += weekMaxDef
+
+                // --- WIN/LOSS Detection ---
+                let myPoints = matchup.points
+                let oppPoints = matchup.customPoints ?? 0.0
+                if myPoints > oppPoints { wins += 1 }
+                else { losses += 1 }
+
+                // If team lost this round, they're eliminated from the main bracket
+                if myPoints < oppPoints { eliminated = true }
+            }
+
+            // Champion: Use explicit Sleeper field
+            if let champ = team.championships, champ > 0 {
+                isChampion = true
+            } else if gamesPlayed > 0 && losses == 0 {
+                isChampion = true
+            }
+        }
+
+        let mgmtPercent = maxPointsFor > 0 ? (pointsFor / maxPointsFor) * 100 : nil
+        let offMgmtPercent = maxOffensivePointsFor > 0 ? (offensivePointsFor / maxOffensivePointsFor) * 100 : nil
+        let defMgmtPercent = maxDefensivePointsFor > 0 ? (defensivePointsFor / maxDefensivePointsFor) * 100 : nil
+        let ppw = gamesPlayed > 0 ? pointsFor / Double(gamesPlayed) : 0
+        let oppw = gamesPlayed > 0 ? offensivePointsFor / Double(gamesPlayed) : 0
+        let dppw = gamesPlayed > 0 ? defensivePointsFor / Double(gamesPlayed) : 0
+
+        return PlayoffStats(
+            pointsFor: pointsFor,
+            maxPointsFor: maxPointsFor,
+            ppw: ppw,
+            managementPercent: mgmtPercent,
+            offensivePointsFor: offensivePointsFor,
+            maxOffensivePointsFor: maxOffensivePointsFor,
+            offensivePPW: oppw,
+            offensiveManagementPercent: offMgmtPercent,
+            defensivePointsFor: defensivePointsFor,
+            maxDefensivePointsFor: maxDefensivePointsFor,
+            defensivePPW: dppw,
+            defensiveManagementPercent: defMgmtPercent,
+            weeks: gamesPlayed,
+            wins: wins,
+            losses: losses,
+            recordString: "\(wins)-\(losses)",
+            isChampion: isChampion
+        )
+    }
+}
+
+extension TeamStanding {
+    func offensivePointsForPlayoffWeek(_ week: Int) -> Double {
+        roster.flatMap { player in
+            player.weeklyScores.filter { $0.week == week }
+                .compactMap { ws in
+                    let pos = player.position
+                    if offensivePositions.contains(pos) {
+                        return ws.points_half_ppr ?? ws.points
+                    }
+                    return nil
+                }
+        }.reduce(0, +)
+    }
+    func defensivePointsForPlayoffWeek(_ week: Int) -> Double {
+        roster.flatMap { player in
+            player.weeklyScores.filter { $0.week == week }
+                .compactMap { ws in
+                    let pos = player.position
+                    if defensivePositions.contains(pos) {
+                        return ws.points_half_ppr ?? ws.points
+                    }
+                    return nil
+                }
+        }.reduce(0, +)
+    }
+}

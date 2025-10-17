@@ -1,0 +1,1876 @@
+
+//
+//  DSDDashboard.swift
+//  DynastyStatDrop
+//
+//  Full updated file (includes Off MPF / Def MPF integration)
+//
+//  Updates vs your prior version:
+//   - Added .maxOffensivePointsFor (“Off MPF”) & .maxDefensivePointsFor (“Def MPF”) to the
+//     selectable Offensive / Defensive stat lists.
+//   - (Optional) You can include them in the defaultOffensive / defaultDefensive sets by
+//     uncommenting the indicated lines if you want them visible by default.
+//   - Added proper aggregated (All Time) value support for Off MPF / Def MPF using
+//     totalMaxOffensivePointsFor / totalMaxDefensivePointsFor already present in AggregatedOwnerStats.
+//   - Added mapping for these categories in aggregatedValue (All Time mode) and statDisplayValue.
+//
+//  NOTE: Assumes Category enum & DSDStatsService.StatType already contain:
+//        .maxOffensivePointsFor, .maxDefensivePointsFor
+//        with abbreviations like “Max OPF”, “Max DPF” (adjust abbreviations in Category if needed).
+//
+
+import SwiftUI
+
+struct DSDDashboard: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @EnvironmentObject var appSelection: AppSelection
+    @EnvironmentObject var leagueManager: SleeperLeagueManager
+    @Binding var selectedTab: Tab
+    @AppStorage("statDropPersonality") var userStatDropPersonality: StatDropPersonality = .classicESPN
+   
+    // Layout constants
+    private let horizontalEdgePadding: CGFloat = 16
+    private let cardHeight: CGFloat = 160
+    private let cardSpacing: CGFloat = 30
+    private let cardMaxWidth: CGFloat = 780
+    private let threeCardHeight: CGFloat = 3 * 160 + 2 * 30
+   
+    // Default card selections
+    private let defaultStandings: Set<Category> = [.teamStanding, .pointsForStanding, .averagePointsPerWeekStanding]
+    private let defaultTeam: Set<Category>       = [.pointsFor, .teamAveragePPW, .managementPercent]
+    private let defaultOffensive: Set<Category>  = [
+        .offensivePointsFor,
+        .averageOffensivePPW,
+        .offensiveManagementPercent
+        // Uncomment next line if you want Off MPF to appear by default:
+        // , .maxOffensivePointsFor
+    ]
+    private let defaultDefensive: Set<Category>  = [
+        .defensivePointsFor,
+        .averageDefensivePPW,
+        .defensiveManagementPercent
+        // Uncomment next line if you want Def MPF by default:
+        // , .maxDefensivePointsFor
+    ]
+   
+    // UI / selection state
+    @State private var selectedDate: String = ""
+    @State private var selectedTeamId: String?
+    @State private var selectedTeamName: String?
+    @State private var showImportLeague = false
+    @State private var showSettingsMenu = false
+   
+    // Customization (3 stats per card)
+    @State private var selectedStandings: Set<Category> = []
+    @State private var selectedTeamStats: Set<Category> = []
+    @State private var selectedOffensiveStats: Set<Category> = []
+    @State private var selectedDefensiveStats: Set<Category> = []
+    @State private var customizationLoaded = false
+   
+    // Behavior flags
+    @State private var suppressAutoUserTeam = false
+   
+    // Flip / expand model
+    @StateObject private var flipModel = FlipExpandModel()
+    @Namespace private var statCardNamespace
+    @AccessibilityFocusState private var isAccessibilityFocused: Bool
+   
+    // Standings Explorer
+    @State private var standingsSelectedCategory: Category = .pointsForStanding
+    @State private var standingsSearchText: String = ""
+    @State private var standingsShowGrid = false
+   
+    // Convenience
+    var selectedLeague: LeagueData? { appSelection.selectedLeague }
+    var seasons: [SeasonData] { selectedLeague?.seasons ?? [] }
+    private var isAllTimeMode: Bool { selectedDate == "All Time" }
+   
+    var allSeasonNames: [String] {
+        let ids = seasons.map { $0.id }
+        return ids.isEmpty ? ["All Time"] : ids + ["All Time"]
+    }
+    var teams: [TeamStanding] {
+        guard let league = selectedLeague else { return [] }
+        if isAllTimeMode {
+            return league.seasons.sorted { $0.id < $1.id }.last?.teams ?? []
+        }
+        return league.seasons.first(where: { $0.id == selectedDate })?.teams ?? []
+    }
+    var selectedTeam: TeamStanding? {
+        if let name = selectedTeamName {
+            return teams.first { $0.name == name } ?? teams.first
+        }
+        if let tid = selectedTeamId { return teams.first { $0.id == tid } ?? teams.first }
+        if let uname = authViewModel.userTeam { return teams.first { $0.name == uname } ?? teams.first }
+        return teams.first
+    }
+   
+    private func aggregatedOwner(for team: TeamStanding?) -> AggregatedOwnerStats? {
+        guard isAllTimeMode,
+              let t = team,
+              let league = selectedLeague,
+              let cache = league.allTimeOwnerStats else { return nil }
+        return cache[t.ownerId]
+    }
+   
+    struct AggregatedTeamStats {
+        let teamName: String
+        let totalPointsFor: Double
+        let totalMaxPointsFor: Double
+        let aggregatedManagementPercent: Double
+        let avgTeamPPW: Double
+        let totalWins: Int
+        let totalLosses: Int
+        let totalTies: Int
+        let offensivePointsFor: Double?
+        let defensivePointsFor: Double?
+        let avgOffPPW: Double?
+        let avgDefPPW: Double?
+        let championships: Int
+        let totalMaxOffensivePointsFor: Double?
+        let totalMaxDefensivePointsFor: Double?
+        let playoffStats: PlayoffStats?
+    }
+   
+    // Helper to build aggregated stats for any team
+    private func aggregatedStats(for team: TeamStanding) -> AggregatedTeamStats? {
+        guard isAllTimeMode,
+              let league = selectedLeague,
+              let cache = league.allTimeOwnerStats,
+              let agg = cache[team.ownerId] else { return nil }
+        return AggregatedTeamStats(
+            teamName: agg.latestDisplayName,
+            totalPointsFor: agg.totalPointsFor,
+            totalMaxPointsFor: agg.totalMaxPointsFor,
+            aggregatedManagementPercent: agg.managementPercent,
+            avgTeamPPW: agg.teamPPW,
+            totalWins: agg.totalWins,
+            totalLosses: agg.totalLosses,
+            totalTies: agg.totalTies,
+            offensivePointsFor: agg.totalOffensivePointsFor,
+            defensivePointsFor: agg.totalDefensivePointsFor,
+            avgOffPPW: agg.offensivePPW,
+            avgDefPPW: agg.defensivePPW,
+            championships: agg.championships,
+            totalMaxOffensivePointsFor: agg.totalMaxOffensivePointsFor,
+            totalMaxDefensivePointsFor: agg.totalMaxDefensivePointsFor,
+            playoffStats: agg.playoffStats        )
+    }
+   
+    var aggregatedAllTime: AggregatedTeamStats? {
+        guard let team = selectedTeam else { return nil }
+        return aggregatedStats(for: team)
+    }
+   
+    // Header helpers
+    private var seasonDisplayText: String {
+        guard let league = selectedLeague else { return "--" }
+        if isAllTimeMode || selectedDate.isEmpty {
+            let count = league.seasons.count
+            return "\(count)\(ordinalSuffix(count)) season"
+        }
+        if let idx = league.seasons.firstIndex(where: { $0.id == selectedDate }) {
+            let n = idx + 1
+            return "\(n)\(ordinalSuffix(n)) season"
+        }
+        return selectedDate
+    }
+    private func displayRecord() -> String {
+        if isAllTimeMode, let agg = aggregatedAllTime {
+            return "\(agg.totalWins)-\(agg.totalLosses)\(agg.totalTies > 0 ? "-\(agg.totalTies)" : "")"
+        }
+        return selectedTeam?.winLossRecord ?? "--"
+    }
+   
+    // Category lists
+    let availableStandings: [Category] = [
+        .teamStanding, .pointsForStanding, .averagePointsPerWeekStanding, .averagePointsScoredAgainstPerWeekStanding,
+        .maxPointsForStanding, .managementPercentStanding, .offensiveStanding, .defensiveStanding,
+        .pointsScoredAgainstStanding, .qbPPWStanding, .individualQBPPWStanding, .rbPPWStanding, .individualRBPPWStanding,
+        .wrPPWStanding, .individualWRPPWStanding, .tePPWStanding, .individualTEPPWStanding, .kickerPPWStanding,
+        .individualKickerPPWStanding, .dlPPWStanding, .individualDLPPWStanding, .lbPPWStanding, .individualLBPPWStanding,
+        .dbPPWStanding, .individualDBPPWStanding
+    ]
+    let availableTeamStats: [Category] = [
+        .pointsFor, .teamAveragePPW, .managementPercent, .maxPointsFor, .pointsScoredAgainst,
+        .highestPointsInGameAllTime, .highestPointsInGameSeason, .recordAllTime, .recordSeason,
+        .mostPointsAgainstAllTime, .mostPointsAgainstSeason, .playoffBerthsAllTime, .playoffRecordAllTime, .championships
+    ]
+    // Added .maxOffensivePointsFor
+    let availableOffensiveStats: [Category] = [
+        .offensivePointsFor, .maxOffensivePointsFor, .averageOffensivePPW, .offensiveManagementPercent,
+        .bestOffensivePositionPPW, .worstOffensivePositionPointsAgainstPPW,
+        .qbPositionPPW, .rbPositionPPW, .wrPositionPPW, .tePositionPPW, .kickerPPW,
+        .individualQBPPW, .individualRBPPW, .individualWRPPW, .individualTEPPW, .individualKickerPPW
+    ]
+    // Added .maxDefensivePointsFor
+    let availableDefensiveStats: [Category] = [
+        .defensivePointsFor, .maxDefensivePointsFor, .averageDefensivePPW, .defensiveManagementPercent,
+        .bestDefensivePositionPPW, .worstDefensivePositionPointsAgainstPPW,
+        .dlPositionPPW, .lbPositionPPW, .dbPositionPPW,
+        .individualDLPPW, .individualLBPPW, .individualDBPPW
+    ]
+    let standingsExplorerCategories: [Category] = [
+        .teamStanding,
+        .pointsForStanding, .maxPointsForStanding, .averagePointsPerWeekStanding,
+        .managementPercentStanding,
+        .offensiveManagementPercentStanding, // <-- ADDED
+        .defensiveManagementPercentStanding, // <-- ADDED
+        .offensiveStanding, .defensiveStanding,
+        // REMOVED:
+        // .pointsScoredAgainstStanding, .averagePointsScoredAgainstPerWeekStanding,
+        .qbPPWStanding, .rbPPWStanding, .wrPPWStanding, .tePPWStanding, .kickerPPWStanding,
+        .dlPPWStanding, .lbPPWStanding, .dbPPWStanding,
+        .individualQBPPWStanding, .individualRBPPWStanding, .individualWRPPWStanding,
+        .individualTEPPWStanding, .individualKickerPPWStanding,
+        .individualDLPPWStanding, .individualLBPPWStanding, .individualDBPPWStanding
+    ]
+    private let ascendingBetterStandings: Set<Category> = [
+        .pointsScoredAgainstStanding, .averagePointsScoredAgainstPerWeekStanding
+    ]
+   
+    // Position tokens
+    let positionColors: [String: Color] = [
+        "QB": .red, "RB": .green, "WR": .blue, "TE": .yellow,
+        "K": Color(red: 0.75, green: 0.6, blue: 1.0),
+        "DL": .orange, "LB": .purple, "DB": .pink
+    ]
+   
+    var body: some View {
+        ZStack {
+            Image("Background1").resizable().ignoresSafeArea()
+            GeometryReader { geo in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        logoAndDashboardText(availableWidth: geo.size.width)
+                        teamInfoLine
+                        selectionMenus
+                        cardGrid(availableWidth: geo.size.width)
+                            .padding(.bottom, 30)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
+                }
+            }
+            overlayLayer
+        }
+        .onAppear {
+            initializeDefaultSelections()
+            selectAppropriateLeague()
+            syncInitialSelections(replaceTeam: false)
+            loadCustomizationIfAvailable()
+            standingsSelectedCategory = standingsExplorerCategories.first ?? .teamStanding
+            if appSelection.leagues.isEmpty {
+                loadSavedLeagues()
+            }
+        }
+        .onChange(of: appSelection.leagues) { _, _ in syncInitialSelections(replaceTeam: true) }
+        .onChange(of: appSelection.selectedLeagueId) { _, _ in
+            customizationLoaded = false
+            syncInitialSelections(replaceTeam: false)
+            loadCustomizationIfAvailable(force: true)
+        }
+        .onChange(of: authViewModel.userTeam) { _, _ in syncInitialSelections(replaceTeam: true) }
+        .onChange(of: selectedDate) { _, _ in handleSeasonChange() }
+        .onChange(of: selectedStandings) { _, _ in enforceIntegrityAndPersist() }
+        .onChange(of: selectedTeamStats) { _, _ in enforceIntegrityAndPersist() }
+        .onChange(of: selectedOffensiveStats) { _, _ in enforceIntegrityAndPersist() }
+        .onChange(of: selectedDefensiveStats) { _, _ in enforceIntegrityAndPersist() }
+        .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.reduceMotionStatusDidChangeNotification)) { _ in
+            flipModel.reducedMotion = UIAccessibility.isReduceMotionEnabled
+        }
+    }
+   
+    // MARK: Header UI
+    private func logoAndDashboardText(availableWidth: CGFloat) -> some View {
+        let maxLogoWidth = min(availableWidth - 2 * horizontalEdgePadding, 300)
+        return VStack(spacing: -60) {
+            Image("DSDLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: maxLogoWidth)
+                .accessibilityHidden(flipModel.isAnyOverlayActive)
+            Image("DashboardText")
+                .resizable()
+                .scaledToFit()
+                .frame(width: maxLogoWidth)
+                .accessibilityHidden(flipModel.isAnyOverlayActive)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, -155)
+        .animation(.easeInOut(duration: 0.25), value: maxLogoWidth)
+    }
+    private var teamInfoLine: some View {
+        let displayName: String = {
+            if let team = selectedTeam {
+                return isAllTimeMode
+                ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
+                : team.name
+            }
+            return selectedTeamName
+            ?? authViewModel.userTeam
+            ?? fallbackFirstTeamName()
+            ?? "Team"
+        }()
+        return HStack(spacing: 8) {
+            Text(displayName)
+                .font(.custom("Phatt", size: 18)).bold()
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(seasonDisplayText)
+                .font(.custom("Phatt", size: 18)).bold()
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .center)
+            Text(displayRecord())
+                .font(.custom("Phatt", size: 18)).bold()
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.yellow.opacity(0.55))
+        .cornerRadius(12)
+        .shadow(color: .yellow.opacity(0.8), radius: 6, y: 2)
+        .padding(.horizontal, horizontalEdgePadding)
+        .accessibilityHidden(flipModel.isAnyOverlayActive)
+    }
+   
+    // MARK: Menus
+    private var selectionMenus: some View {
+        VStack(spacing: 10) {
+            // Top Row: League (75%) + Settings (25%)
+            GeometryReader { geo in
+                let spacing: CGFloat = 12
+                let totalAvailable = geo.size.width - spacing
+                let leagueWidth = totalAvailable * 0.75
+                let settingsWidth = totalAvailable * 0.25
+                HStack(spacing: spacing) {
+                    leagueMenu
+                        .frame(width: leagueWidth)
+                    settingsMenuButton
+                        .frame(width: settingsWidth)
+                }
+                .sheet(isPresented: $showImportLeague) {
+                    SleeperLeaguesImportView(
+                        onLeagueImported: { newLeagueId in
+                            // Auto-select the newly imported league
+                            appSelection.selectedLeagueId = newLeagueId
+                            // Reset selections to trigger refresh
+                            customizationLoaded = false
+                            selectedDate = ""
+                            selectedTeamId = nil
+                            selectedTeamName = nil
+                            suppressAutoUserTeam = false
+                           
+                            // Force a full refresh with user team priority
+                            DispatchQueue.main.async {
+                                syncInitialSelections(replaceTeam: true)
+                                // Ensure user's team is selected after sync
+                                if let userTeam = authViewModel.userTeam,
+                                   let league = appSelection.leagues.first(where: { $0.id == newLeagueId }),
+                                   let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
+                                   let userTeamMatch = latestSeason.teams.first(where: { $0.name == userTeam }) {
+                                    selectedTeamId = userTeamMatch.id
+                                    selectedTeamName = userTeamMatch.name
+                                    appSelection.selectedTeamId = userTeamMatch.id
+                                }
+                                loadCustomizationIfAvailable(force: true)
+                                handleSeasonChange()
+                                loadSavedLeagues() // Reload leagues after import to include the new one
+                            }
+                            print("Auto-selected new league: \(newLeagueId)")
+                        }
+                    )
+                }
+                .accessibilityHidden(flipModel.isAnyOverlayActive)
+            }
+            .frame(height: 50)
+
+            // Bottom Row: Season (50%) + Team (50%)
+            GeometryReader { geo in
+                let spacing: CGFloat = 12
+                let totalAvailable = geo.size.width - spacing
+                let halfWidth = totalAvailable * 0.5
+                HStack(spacing: spacing) {
+                    seasonMenu
+                        .frame(width: halfWidth)
+                    teamMenu
+                        .frame(width: halfWidth)
+                }
+                .accessibilityHidden(flipModel.isAnyOverlayActive)
+            }
+            .frame(height: 50)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, horizontalEdgePadding)
+    }
+    private func menuLabel(_ text: String) -> some View {
+        Text(text)
+            .bold()
+            .foregroundColor(.orange)
+            .font(.custom("Phatt", size: 16))
+            .frame(minHeight: 36)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 30)
+                    .fill(Color.black)
+                    .shadow(color: .blue.opacity(0.7), radius: 8, y: 2)
+            )
+    }
+    private var seasonMenu: some View {
+        Menu {
+            ForEach(allSeasonNames, id: \.self) { name in
+                Button(name) {
+                    selectedDate = name
+                    handleSeasonChange()
+                }
+            }
+        } label: { menuLabel(selectedDate.isEmpty ? "Season" : selectedDate) }
+    }
+    private var leagueMenu: some View {
+        Menu {
+            ForEach(appSelection.leagues, id: \.id) { league in
+                Button(league.name) {
+                    appSelection.selectedLeagueId = league.id
+                    let key = "dsd.lastSelectedLeague.\(currentUsernameForKey())"
+                    UserDefaults.standard.set(league.id, forKey: key)
+                    customizationLoaded = false
+                    selectedDate = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
+                    if selectedTeamName == nil {
+                        selectedTeamName = authViewModel.userTeam
+                    }
+                    handleSeasonChange()
+                    loadCustomizationIfAvailable(force: true)
+                }
+            }
+            Divider()
+            Button("Upload New League") { showImportLeague = true }
+        } label: {
+            menuLabel(selectedLeague?.name ?? "Import League")
+        }
+    }
+   
+    private var settingsMenuButton: some View {
+        Menu {
+            Button("Sync Leagues") { syncLeagues() }
+                    Button("Reset Leagues", action: resetLeagues)
+                    Divider()
+                    Button("Settings") { showSettingsMenu = true }
+                    Button("Sign Out", action: signOut)
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 34, height: 34)
+                        .foregroundColor(.orange)
+                        .background(
+                            RoundedRectangle(cornerRadius: 30)
+                                .fill(Color.black)
+                                .shadow(color: .blue.opacity(0.7), radius: 8, y: 2)
+                        )
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                }
+            }
+   
+   
+   
+   
+    private func signOut() {
+        // Log the user out and clear app state
+        authViewModel.logout()
+        if let username = authViewModel.currentUsername {
+            UserDefaults.standard.set(false, forKey: "rememberMe_\(username)")
+            UserDefaults.standard.removeObject(forKey: "lastRememberedUsername")
+        }
+        appSelection.leagues = []
+        appSelection.selectedLeagueId = nil
+        appSelection.selectedTeamId = nil
+        appSelection.selectedSeason = ""
+        appSelection.userTeam = ""
+        leagueManager.clearInMemory()
+        // Your app will reactively show the SignIn view when isLoggedIn is false
+    }
+
+    private func resetLeagues() {
+        leagueManager.clearInMemory()
+        leagueManager.saveLeagues()
+        let activeUsername = authViewModel.currentUsername ?? "global"
+        let userDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("SleeperLeagues", isDirectory: true)
+            .appendingPathComponent(activeUsername, isDirectory: true)
+        if FileManager.default.fileExists(atPath: userDir.path) {
+            try? FileManager.default.removeItem(at: userDir)
+        }
+        appSelection.leagues = []
+        appSelection.selectedLeagueId = nil
+        appSelection.selectedTeamId = nil
+        appSelection.selectedSeason = ""
+        appSelection.userTeam = ""
+        UserDefaults.standard.removeObject(forKey: "dsd.lastSelectedLeague.\(activeUsername)")
+        UserDefaults.standard.set(false, forKey: "hasImportedLeague_\(activeUsername)")
+        OwnerAssetStore.shared.clearDisk()
+    }
+   
+    private func syncLeagues() {
+        guard let selectedLeague = appSelection.selectedLeague else {
+            // Show a simple alert or just return
+            print("No league selected for sync")
+            return
+        }
+       
+        // Show a simple loading message
+        print("Syncing league: \(selectedLeague.name)")
+       
+        // Call the league manager to sync data
+        leagueManager.refreshLeagueData(leagueId: selectedLeague.id) { result in
+            DispatchQueue.main.async { [self] in
+                switch result {
+                case .success(let updatedLeague):
+                    // Update the leagues array
+                    if let index = appSelection.leagues.firstIndex(where: { $0.id == selectedLeague.id }) {
+                        appSelection.leagues[index] = updatedLeague
+                    }
+                    // Refresh the dashboard
+                    customizationLoaded = false
+                    loadCustomizationIfAvailable(force: true)
+                    print("League sync completed: \(updatedLeague.name)")
+                   
+                case .failure(let error):
+                    print("Sync failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+   
+   
+   
+    private var teamMenu: some View {
+        Menu {
+            // Sort teams alphabetically
+            let sortedTeams = teams.sorted { teamA, teamB in
+                let nameA = isAllTimeMode
+                    ? (aggregatedOwner(for: teamA)?.latestDisplayName ?? teamA.name)
+                    : teamA.name
+                let nameB = isAllTimeMode
+                    ? (aggregatedOwner(for: teamB)?.latestDisplayName ?? teamB.name)
+                    : teamB.name
+                return nameA.localizedCaseInsensitiveCompare(nameB) == .orderedAscending
+            }
+           
+            ForEach(sortedTeams, id: \.id) { team in
+                let displayName = isAllTimeMode
+                    ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
+                    : team.name
+               
+                let isSelected = selectedTeamId == team.id ||
+                              (selectedTeamName != nil && selectedTeamName == displayName) ||
+                              (authViewModel.userTeam != nil && authViewModel.userTeam == displayName)
+               
+                Button(displayName) {
+                    selectedTeamId = team.id
+                    selectedTeamName = displayName
+                    appSelection.selectedTeamId = team.id
+                    suppressAutoUserTeam = true // Prevent auto-resetting
+                }
+                .foregroundColor(isSelected ? .orange : .white)
+                .background(isSelected ? Color.orange.opacity(0.2) : Color.clear)
+                .cornerRadius(8)
+            }
+        } label: {
+            let displayName: String = {
+                if let team = selectedTeam {
+                    return isAllTimeMode
+                    ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
+                    : team.name
+                }
+                return selectedTeamName ?? authViewModel.userTeam ?? "Select Team"
+            }()
+            menuLabel(displayName)
+        }
+    }
+   
+    // MARK: Card Grid
+    private func cardGrid(availableWidth: CGFloat) -> some View {
+        let usableWidth = min(cardMaxWidth, availableWidth - 2 * horizontalEdgePadding)
+        return VStack(spacing: cardSpacing) {
+            statCard(index: 0, glow: .orange, categories: Array(selectedStandings), width: usableWidth)
+            statCard(index: 1, glow: .green, categories: Array(selectedTeamStats), width: usableWidth)
+            statCard(index: 2, glow: .red, categories: Array(selectedOffensiveStats), width: usableWidth)
+            statCard(index: 3, glow: .blue, categories: Array(selectedDefensiveStats), width: usableWidth)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, horizontalEdgePadding)
+        .animation(.easeInOut(duration: 0.25), value: flipModel.isAnyOverlayActive)
+    }
+    private func statCard(index: Int,
+                          glow: Color,
+                          categories: [Category],
+                          width: CGFloat) -> some View {
+        let isExpanded = flipModel.expandedSection == index
+        let isCustomizing = flipModel.customizingSection == index
+        let isOtherDimmed = flipModel.isAnyOverlayActive && !isExpanded && !isCustomizing
+        let showFront = !isExpanded && !isCustomizing
+        let identifier = "card-\(index)"
+        let team = selectedTeam
+        return ZStack {
+            if showFront {
+                collapsedCard(index: index, glow: glow, categories: categories, team: team)
+                    .matchedGeometryEffect(id: identifier, in: statCardNamespace)
+            } else {
+                Color.clear.frame(height: cardHeight)
+            }
+        }
+        .frame(width: width)
+        .opacity(isOtherDimmed ? 0 : 1)
+        .scaleEffect(isOtherDimmed ? 0.95 : 1)
+        .animation(.easeInOut(duration: 0.25), value: isOtherDimmed)
+        .onTapGesture {
+            guard flipModel.customizingSection == nil else { return }
+            flipModel.beginFlip(for: index)
+        }
+    }
+    private func collapsedCard(index: Int,
+                               glow: Color,
+                               categories: [Category],
+                               team: TeamStanding?) -> some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.black)
+            .overlay(
+                VStack(spacing: 8) {
+                    let displayName = isAllTimeMode
+                    ? (aggregatedOwner(for: team)?.latestDisplayName ?? (team?.name ?? ""))
+                    : (team?.name ?? "")
+                    Text(
+                        index == 0 ? "\(displayName) Standings" :
+                        index == 1 ? "Team Stat Drop" :
+                        index == 2 ? "Offensive Stat Drop" : "Defensive Stat Drop"
+                    )
+                    .foregroundColor(glow)
+                    .bold()
+                    .font(.custom("Phatt", size: 20))
+                    .underline()
+                    .padding(.top, 8)
+                   
+                    Spacer(minLength: 0)
+                   
+                    if let team = team, !categories.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(categories.prefix(3), id: \.self) { category in
+                                VStack(spacing: 4) {
+                                    coloredStatName(category)
+                                        .padding(.vertical, 2)
+                                        .padding(.horizontal, 6)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.black))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                                        )
+                                    Text(statDisplayValue(category: category, team: team))
+                                        .foregroundColor(.white)
+                                        .bold()
+                                        .font(.custom("Phatt", size: 14))
+                                        .minimumScaleFactor(0.7)
+                                        .lineLimit(1)
+                                        .frame(maxWidth: 90)
+                                }
+                                .frame(minWidth: 70, maxWidth: .infinity)
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                    } else {
+                        Text("No data")
+                            .font(.custom("Phatt", size: 16))
+                            .foregroundColor(.gray)
+                    }
+                   
+                    Spacer(minLength: 0)
+                   
+                    Button("Customize") {
+                        flipModel.beginCustomize(for: index)
+                    }
+                    .underline()
+                    .font(.custom("Phatt", size: 12))
+                    .foregroundColor(.blue)
+                    .bold()
+                    .padding(.bottom, 10)
+                    .disabled(flipModel.expandedSection != nil)
+                }
+                .padding(.horizontal, 8)
+            )
+            .shadow(color: glow.opacity(0.9), radius: 10, y: 4)
+            .frame(height: cardHeight)
+    }
+   
+    // MARK: Overlay / Flip
+    @ViewBuilder
+    private var overlayLayer: some View {
+        if flipModel.isAnyOverlayActive {
+            GeometryReader { proxy in
+                let width = min(proxy.size.width - 2 * horizontalEdgePadding, cardMaxWidth)
+                let height = min(threeCardHeight, proxy.size.height - 120)
+                let identifier = "card-\(flipModel.expandedSection ?? flipModel.customizingSection ?? -1)"
+                ZStack {
+                    Color.black.opacity(0.55)
+                        .ignoresSafeArea()
+                        .onTapGesture { flipModel.collapse() }
+                    VStack {
+                        Spacer(minLength: 0)
+                        ZStack {
+                            if let index = flipModel.expandedSection ?? flipModel.customizingSection {
+                                let glow: Color = [0: .orange, 1: .green, 2: .red, 3: .blue][index] ?? .orange
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(Color.black)
+                                    .shadow(color: glow.opacity(0.9), radius: 34)
+                                    .overlay(
+                                        Group {
+                                            if flipModel.expandedSection == index {
+                                                flipFaceContainer(index: index, glow: glow)
+                                            } else {
+                                                customizationContent(index: index, glow: glow)
+                                            }
+                                        }
+                                    )
+                                    .matchedGeometryEffect(id: identifier, in: statCardNamespace)
+                                    .frame(width: width, height: height)
+                                    .modifier(FlipTiltModifier(progress: flipModel.flipProgress,
+                                                               enabled: flipModel.expandedSection == index,
+                                                               glow: glow,
+                                                               reducedMotion: flipModel.reducedMotion))
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.25), value: flipModel.isAnyOverlayActive)
+            }
+            .accessibilityAddTraits(.isModal)
+        }
+    }
+    @ViewBuilder
+    private func flipFaceContainer(index: Int, glow: Color) -> some View {
+        let angle = 180.0 * Double(flipModel.flipProgress)
+        ZStack {
+            if let team = selectedTeam {
+                frontSummaryFlip(index: index, team: team, glow: glow)
+                    .opacity(angle < 90 ? 1 : 0)
+                    .rotation3DEffect(.degrees(angle), axis: (0,1,0), perspective: 0.9/900)
+            }
+            backDetailFlip(index: index, glow: glow)
+                .opacity(angle >= 90 ? 1 : 0)
+                .rotation3DEffect(.degrees(angle - 180), axis: (0,1,0), perspective: 0.9/900)
+            closeButton
+        }
+        .clipped()
+    }
+    private var closeButton: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Button { flipModel.collapse() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(6)
+                }
+                .accessibilityLabel("Close expanded panel")
+            }
+            Spacer()
+        }
+        .padding(.trailing, 8)
+        .padding(.top, 8)
+    }
+    private func frontSummaryFlip(index: Int, team: TeamStanding, glow: Color) -> some View {
+        VStack(spacing: 16) {
+            Text(cardTitle(index: index, team: team))
+                .foregroundColor(glow)
+                .font(.custom("Phatt", size: 28))
+                .underline()
+                .padding(.top, 4)
+            HStack(spacing: 14) {
+                ForEach(displayCategories(for: index).prefix(3), id: \.self) { cat in
+                    VStack(spacing: 6) {
+                        coloredStatName(cat)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.7)))
+                        Text(statDisplayValue(category: cat, team: team))
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            Spacer()
+            Text("Flipping...")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.35))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 12)
+    }
+    @ViewBuilder
+    private func backDetailFlip(index: Int, glow: Color) -> some View {
+        switch index {
+        case 0:
+            if let allTimeOwnerStats = selectedLeague?.allTimeOwnerStats {
+                Group {
+                    StandingsExplorerView(
+                        teams: teams,
+                        myTeamId: selectedTeam?.id,
+                        categories: standingsExplorerCategories,
+                        ascendingBetter: ascendingBetterStandings,
+                        selected: $standingsSelectedCategory,
+                        searchText: $standingsSearchText,
+                        showGrid: $standingsShowGrid,
+                        statProvider: { cat, tm in self.valueForStandingCategory(cat, team: tm) },
+                        rankProvider: { cat, tm in self.rankString(for: cat, team: tm) },
+                        colorForCategory: { categoryColor(for: $0) },
+                        onClose: { flipModel.collapse() },
+                        isAllTimeMode: isAllTimeMode,
+                        ownerAggProvider: { aggregatedOwner(for: $0) },
+                        ascendingBetterStandings: ascendingBetterStandings,
+                        allTimeOwnerStats: allTimeOwnerStats
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(8)
+                }
+            } else {
+                Group {
+                    emptyDetail
+                }
+            }
+        case 1:
+            if let team = selectedTeam {
+                ScrollView {
+                    TeamStatExpandedView(
+                        team: team,
+                        aggregatedAllTime: { self.aggregatedStats(for: $0) }
+                    )
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(4)
+            } else { emptyDetail }
+        case 2:
+            if let team = selectedTeam {
+                ScrollView {
+                    OffDefStatExpandedView(
+                        team: team,
+                        mode: .offense,
+                        league: selectedLeague!,
+                        personality: userStatDropPersonality
+                    )
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(4)
+            } else { emptyDetail }
+        case 3:
+            if let team = selectedTeam {
+                ScrollView {
+                    OffDefStatExpandedView(
+                        team: team,
+                        mode: .defense,
+                        league: selectedLeague!,
+                        personality: userStatDropPersonality
+                    )
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(4)
+            } else { emptyDetail }
+        default:
+            emptyDetail
+        }
+    }
+    private var emptyDetail: some View {
+        VStack {
+            Spacer()
+            Text("No Team Selected")
+                .foregroundColor(.gray)
+                .font(.headline)
+            Spacer()
+        }
+    }
+   
+    // MARK: Helpers (color, stats, ranking)
+   
+   
+   
+    private func categoryColor(for category: Category) -> Color {
+        let abbr = category.abbreviation
+        let token = abbr.split(separator: " ").first.map(String.init) ?? abbr
+        return positionColors[token] ?? .orange
+    }
+    private func valueForStandingCategory(_ category: Category, team: TeamStanding) -> String {
+        if isAllTimeMode, let agg = aggregatedOwner(for: team) {
+            switch category {
+            case .teamStanding: return rankString(for: .teamStanding, team: team)
+            case .pointsForStanding: return formatNumber(agg.totalPointsFor, decimals: 2)
+            case .averagePointsPerWeekStanding: return String(format: "%.2f", agg.teamPPW)
+            case .maxPointsForStanding: return formatNumber(agg.totalMaxPointsFor, decimals: 2)
+            case .managementPercentStanding: return String(format: "%.1f%%", agg.managementPercent)
+            case .offensiveManagementPercentStanding: // <-- ADDED
+                return String(format: "%.1f%%", agg.offensiveManagementPercent)
+            case .defensiveManagementPercentStanding: // <-- ADDED
+                return String(format: "%.1f%%", agg.defensiveManagementPercent)
+            case .offensiveStanding: return formatNumber(agg.totalOffensivePointsFor, decimals: 2)
+            case .defensiveStanding: return formatNumber(agg.totalDefensivePointsFor, decimals: 2)
+            case .qbPPWStanding: return ppwString(agg.positionAvgPPW["QB"])
+            case .rbPPWStanding: return ppwString(agg.positionAvgPPW["RB"])
+            case .wrPPWStanding: return ppwString(agg.positionAvgPPW["WR"])
+            case .tePPWStanding: return ppwString(agg.positionAvgPPW["TE"])
+            case .kickerPPWStanding: return ppwString(agg.positionAvgPPW["K"])
+            case .dlPPWStanding: return ppwString(agg.positionAvgPPW["DL"])
+            case .lbPPWStanding: return ppwString(agg.positionAvgPPW["LB"])
+            case .dbPPWStanding: return ppwString(agg.positionAvgPPW["DB"])
+            case .individualQBPPWStanding: return ppwString(agg.individualPositionPPW["QB"])
+            case .individualRBPPWStanding: return ppwString(agg.individualPositionPPW["RB"])
+            case .individualWRPPWStanding: return ppwString(agg.individualPositionPPW["WR"])
+            case .individualTEPPWStanding: return ppwString(agg.individualPositionPPW["TE"])
+            case .individualKickerPPWStanding: return ppwString(agg.individualPositionPPW["K"])
+            case .individualDLPPWStanding: return ppwString(agg.individualPositionPPW["DL"])
+            case .individualLBPPWStanding: return ppwString(agg.individualPositionPPW["LB"])
+            case .individualDBPPWStanding: return ppwString(agg.individualPositionPPW["DB"])
+            default: break
+            }
+        }
+        switch category {
+        case .teamStanding: return ordinal(team.leagueStanding)
+        case .pointsForStanding: return formatNumber(team.pointsFor, decimals: 2)
+        case .averagePointsPerWeekStanding: return String(format: "%.2f", team.teamPointsPerWeek)
+        case .maxPointsForStanding: return formatNumber(team.maxPointsFor, decimals: 2)
+        case .managementPercentStanding:
+            let mgmt = team.maxPointsFor > 0 ? (team.pointsFor / team.maxPointsFor) * 100 : 0
+            return String(format: "%.1f%%", mgmt)
+        case .offensiveManagementPercentStanding: // <-- ADDED
+            let val = team.offensiveManagementPercent ?? 0
+            return String(format: "%.1f%%", val)
+        case .defensiveManagementPercentStanding: // <-- ADDED
+            let val = team.defensiveManagementPercent ?? 0
+            return String(format: "%.1f%%", val)
+        case .offensiveStanding: return formatNumber(team.offensivePointsFor ?? 0, decimals: 2)
+        case .defensiveStanding: return formatNumber(team.defensivePointsFor ?? 0, decimals: 2)
+        case .qbPPWStanding: return formatPosAvg(team, key: .qbPositionPPW)
+        case .rbPPWStanding: return formatPosAvg(team, key: .rbPositionPPW)
+        case .wrPPWStanding: return formatPosAvg(team, key: .wrPositionPPW)
+        case .tePPWStanding: return formatPosAvg(team, key: .tePositionPPW)
+        case .kickerPPWStanding: return formatPosAvg(team, key: .kickerPPW)
+        case .dlPPWStanding: return formatPosAvg(team, key: .dlPositionPPW)
+        case .lbPPWStanding: return formatPosAvg(team, key: .lbPositionPPW)
+        case .dbPPWStanding: return formatPosAvg(team, key: .dbPositionPPW)
+        case .individualQBPPWStanding: return formatIndAvg(team, key: .individualQBPPW)
+        case .individualRBPPWStanding: return formatIndAvg(team, key: .individualRBPPW)
+        case .individualWRPPWStanding: return formatIndAvg(team, key: .individualWRPPW)
+        case .individualTEPPWStanding: return formatIndAvg(team, key: .individualTEPPW)
+        case .individualKickerPPWStanding: return formatIndAvg(team, key: .individualKickerPPW)
+        case .individualDLPPWStanding: return formatIndAvg(team, key: .individualDLPPW)
+        case .individualLBPPWStanding: return formatIndAvg(team, key: .individualLBPPW)
+        case .individualDBPPWStanding: return formatIndAvg(team, key: .individualDBPPW)
+        default: return "—"
+        }
+    }
+    private func rankString(for category: Category, team: TeamStanding) -> String {
+        standingRank(category: category, team: team)
+    }
+   
+   
+   
+    private func ppwString(_ v: Double?) -> String {
+        guard let v = v else { return "—" }
+        return String(format: "%.2f", v)
+    }
+    private func formatPosAvg(_ team: TeamStanding, key: DSDStatsService.StatType) -> String {
+        if let raw = DSDStatsService.shared.stat(for: team, type: key) as? Double {
+            return String(format: "%.2f", raw)
+        }
+        return "—"
+    }
+
+    private func formatIndAvg(_ team: TeamStanding, key: DSDStatsService.StatType) -> String {
+        if let raw = DSDStatsService.shared.stat(for: team, type: key) as? Double {
+            return String(format: "%.2f", raw)
+        }
+        if let arr = DSDStatsService.shared.stat(for: team, type: key) as? [String] {
+            return arr.first ?? "—"
+        }
+        return "—"
+    }
+   
+    private func customizationConfig(for index: Int) -> (binding: Binding<Set<Category>>, all: [Category], title: String)? {
+        switch index {
+        case 0: return ($selectedStandings, availableStandings, "Standings Stats")
+        case 1: return ($selectedTeamStats, availableTeamStats, "Team Stats")
+        case 2: return ($selectedOffensiveStats, availableOffensiveStats, "Offensive Stats")
+        case 3: return ($selectedDefensiveStats, availableDefensiveStats, "Defensive Stats")
+        default: return nil
+        }
+    }
+    @ViewBuilder
+    private func customizationContent(index: Int, glow: Color) -> some View {
+        if let cfg = customizationConfig(for: index) {
+            StatCardCustomizationOverlay(
+                title: cfg.title,
+                allItems: cfg.all,
+                selectedItems: cfg.binding,
+                maxSelections: 3,
+                valueProvider: { cat in
+                    if let team = selectedTeam { return statDisplayValue(category: cat, team: team) }
+                    return "—"
+                },
+                onClose: { flipModel.collapseCustomization() },
+                glowColor: glow
+            )
+            .padding(16)
+        }
+    }
+    private func displayCategories(for index: Int) -> [Category] {
+        switch index {
+        case 0: return Array(selectedStandings)
+        case 1: return Array(selectedTeamStats)
+        case 2: return Array(selectedOffensiveStats)
+        case 3: return Array(selectedDefensiveStats)
+        default: return []
+        }
+    }
+    private func cardTitle(index: Int, team: TeamStanding) -> String {
+        let baseName = isAllTimeMode ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name) : team.name
+        switch index {
+        case 0: return "\(baseName) Standings"
+        case 1: return "Team Drop"
+        case 2: return "Offense Drop"
+        case 3: return "Defense Drop"
+        default: return "Stats"
+        }
+    }
+    private func coloredStatName(_ category: Category) -> AnyView {
+        let abbr = category.abbreviation
+        let token = abbr.split(separator: " ").first.map(String.init) ?? abbr
+        let color = positionColors[token] ?? .white
+        return AnyView(
+            Text(abbr)
+                .foregroundColor(color)
+                .font(.custom("Phatt", size: 15))
+                .bold()
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+        )
+    }
+    private func underlyingStatForStanding(_ category: Category) -> DSDStatsService.StatType? {
+        switch category {
+        case .pointsForStanding: return .pointsFor
+        case .averagePointsPerWeekStanding: return .teamAveragePPW
+        case .maxPointsForStanding: return .maxPointsFor
+        case .managementPercentStanding: return .managementPercent
+        case .offensiveStanding: return .offensivePointsFor
+        case .defensiveStanding: return .defensivePointsFor
+        case .qbPPWStanding: return .qbPositionPPW
+        case .individualQBPPWStanding: return .individualQBPPW
+        case .rbPPWStanding: return .rbPositionPPW
+        case .individualRBPPWStanding: return .individualRBPPW
+        case .wrPPWStanding: return .wrPositionPPW
+        case .individualWRPPWStanding: return .individualWRPPW
+        case .tePPWStanding: return .tePositionPPW
+        case .individualTEPPWStanding: return .individualTEPPW
+        case .kickerPPWStanding: return .kickerPPW
+        case .individualKickerPPWStanding: return .individualKickerPPW
+        case .dlPPWStanding: return .dlPositionPPW
+        case .individualDLPPWStanding: return .individualDLPPW
+        case .lbPPWStanding: return .lbPositionPPW
+        case .individualLBPPWStanding: return .individualLBPPW
+        case .dbPPWStanding: return .dbPositionPPW
+        case .individualDBPPWStanding: return .individualDBPPW
+        default: return nil
+        }
+    }
+    private func mapCategoryToStatType(_ category: Category) -> DSDStatsService.StatType? {
+        switch category {
+        case .pointsFor: return .pointsFor
+        case .maxPointsFor: return .maxPointsFor
+        case .managementPercent: return .managementPercent
+        case .teamAveragePPW: return .teamAveragePPW
+        case .offensivePointsFor: return .offensivePointsFor
+        case .maxOffensivePointsFor: return .maxOffensivePointsFor
+        case .averageOffensivePPW: return .averageOffensivePPW
+        case .offensiveManagementPercent: return .offensiveManagementPercent
+        case .defensivePointsFor: return .defensivePointsFor
+        case .maxDefensivePointsFor: return .maxDefensivePointsFor
+        case .averageDefensivePPW: return .averageDefensivePPW
+        case .defensiveManagementPercent: return .defensiveManagementPercent
+        case .qbPositionPPW: return .qbPositionPPW
+        case .rbPositionPPW: return .rbPositionPPW
+        case .wrPositionPPW: return .wrPositionPPW
+        case .tePositionPPW: return .tePositionPPW
+        case .kickerPPW: return .kickerPPW
+        case .dlPositionPPW: return .dlPositionPPW
+        case .lbPositionPPW: return .lbPositionPPW
+        case .dbPositionPPW: return .dbPositionPPW
+        case .individualQBPPW: return .individualQBPPW
+        case .individualRBPPW: return .individualRBPPW
+        case .individualWRPPW: return .individualWRPPW
+        case .individualTEPPW: return .individualTEPPW
+        case .individualKickerPPW: return .individualKickerPPW
+        case .individualDLPPW: return .individualDLPPW
+        case .individualLBPPW: return .individualLBPPW
+        case .individualDBPPW: return .individualDBPPW
+        case .highestPointsInGameAllTime: return .highestPointsInGameAllTime
+        case .highestPointsInGameSeason: return .highestPointsInGameSeason
+        case .mostPointsAgainstAllTime: return .mostPointsAgainstAllTime
+        case .mostPointsAgainstSeason: return .mostPointsAgainstSeason
+        case .playoffBerthsAllTime: return .playoffBerthsAllTime
+        case .playoffRecordAllTime: return .playoffRecordAllTime
+        case .strengths: return .strengths
+        case .weaknesses: return .weaknesses
+        case .offensiveStrengths: return .offensiveStrengths
+        case .offensiveWeaknesses: return .offensiveWeaknesses
+        case .defensiveStrengths: return .defensiveStrengths
+        case .defensiveWeaknesses: return .defensiveWeaknesses
+        case .bestOffensivePositionPPW: return .bestOffensivePositionPPW
+        case .worstOffensivePositionPointsAgainstPPW: return .worstOffensivePositionPointsAgainstPPW
+        case .bestDefensivePositionPPW: return .bestDefensivePositionPPW
+        case .worstDefensivePositionPointsAgainstPPW: return .worstDefensivePositionPointsAgainstPPW
+        case .bestGameDescription: return .bestGameDescription
+        case .biggestRival: return .biggestRival
+        case .recordSeason, .recordAllTime, .winLossRecord: return .winLossRecord
+        case .championships: return .championships
+        default: return nil
+        }
+    }
+    private func isStandingCategory(_ cat: Category) -> Bool {
+        switch cat {
+        case .teamStanding, .pointsForStanding, .averagePointsPerWeekStanding,
+            .averagePointsScoredAgainstPerWeekStanding, .maxPointsForStanding,
+            .managementPercentStanding, .offensiveStanding, .defensiveStanding,
+            .pointsScoredAgainstStanding, .qbPPWStanding, .individualQBPPWStanding,
+            .rbPPWStanding, .individualRBPPWStanding, .wrPPWStanding, .individualWRPPWStanding,
+            .tePPWStanding, .individualTEPPWStanding, .kickerPPWStanding, .individualKickerPPWStanding,
+            .dlPPWStanding, .individualDLPPWStanding, .lbPPWStanding, .individualLBPPWStanding,
+            .dbPPWStanding, .individualDBPPWStanding: return true
+        default: return false
+        }
+    }
+    private func statDisplayValue(category: Category, team: TeamStanding) -> String {
+        if isStandingCategory(category) { return standingRank(category: category, team: team) }
+        if [.recordAllTime, .recordSeason, .winLossRecord].contains(category) {
+            if isAllTimeMode, let agg = aggregatedAllTime {
+                return "\(agg.totalWins)-\(agg.totalLosses)\(agg.totalTies > 0 ? "-\(agg.totalTies)" : "")"
+            }
+            return team.winLossRecord ?? "--"
+        }
+        if isAllTimeMode,
+           let agg = aggregatedAllTime,
+           let aggVal = aggregatedValue(category: category, aggregate: agg) {
+            return aggVal
+        }
+        if category == .pointsScoredAgainst {
+            return formatNumber(team.pointsScoredAgainst, decimals: 2)
+        }
+        if category == .averagePointsScoredAgainstPerWeekStanding {
+            let avg = averagePointsAgainstPerWeek(team)
+            return avg.isFinite ? String(format: "%.2f", avg) : "—"
+        }
+        if category == .pointsScoredAgainstStanding {
+            return formatNumber(team.pointsScoredAgainst, decimals: 2)
+        }
+        if let statType = mapCategoryToStatType(category),
+           let raw = DSDStatsService.shared.stat(for: team, type: statType) {
+            return formatRawStat(raw, category: category)
+        }
+        return "—"
+    }
+   
+    // MARK: Ranking
+    private func standingRank(category: Category, team: TeamStanding) -> String {
+        guard !teams.isEmpty else { return "--" }
+        if isAllTimeMode,
+           let league = selectedLeague,
+           let cache = league.allTimeOwnerStats {
+            func numericValueAllTime(_ category: Category, for team: TeamStanding) -> Double {
+                guard let agg = cache[team.ownerId] else { return 0 }
+                switch category {
+                case .pointsForStanding: return agg.totalPointsFor
+                case .averagePointsPerWeekStanding: return agg.teamPPW
+                case .maxPointsForStanding: return agg.totalMaxPointsFor
+                case .managementPercentStanding: return agg.managementPercent
+                case .offensiveManagementPercentStanding: // <-- ADDED
+                    return agg.offensiveManagementPercent
+                case .defensiveManagementPercentStanding: // <-- ADDED
+                    return agg.defensiveManagementPercent
+                case .offensiveStanding: return agg.totalOffensivePointsFor
+                case .defensiveStanding: return agg.totalDefensivePointsFor
+                case .qbPPWStanding: return agg.positionAvgPPW["QB"] ?? 0
+                case .rbPPWStanding: return agg.positionAvgPPW["RB"] ?? 0
+                case .wrPPWStanding: return agg.positionAvgPPW["WR"] ?? 0
+                case .tePPWStanding: return agg.positionAvgPPW["TE"] ?? 0
+                case .kickerPPWStanding: return agg.positionAvgPPW["K"] ?? 0
+                case .dlPPWStanding: return agg.positionAvgPPW["DL"] ?? 0
+                case .lbPPWStanding: return agg.positionAvgPPW["LB"] ?? 0
+                case .dbPPWStanding: return agg.positionAvgPPW["DB"] ?? 0
+                case .individualQBPPWStanding: return agg.individualPositionPPW["QB"] ?? 0
+                case .individualRBPPWStanding: return agg.individualPositionPPW["RB"] ?? 0
+                case .individualWRPPWStanding: return agg.individualPositionPPW["WR"] ?? 0
+                case .individualTEPPWStanding: return agg.individualPositionPPW["TE"] ?? 0
+                case .individualKickerPPWStanding: return agg.individualPositionPPW["K"] ?? 0
+                case .individualDLPPWStanding: return agg.individualPositionPPW["DL"] ?? 0
+                case .individualLBPPWStanding: return agg.individualPositionPPW["LB"] ?? 0
+                case .individualDBPPWStanding: return agg.individualPositionPPW["DB"] ?? 0
+                default: return 0
+                }
+            }
+            if category == .teamStanding {
+                let ordered = teams.sorted { a, b in
+                    let aggA = cache[a.ownerId]
+                    let aggB = cache[b.ownerId]
+                    // 1. Championships
+                    if (aggA?.championships ?? 0) != (aggB?.championships ?? 0) {
+                        return (aggA?.championships ?? 0) > (aggB?.championships ?? 0)
+                    }
+                    // 2. Record: Total Wins (higher wins first)
+                    if (aggA?.totalWins ?? 0) != (aggB?.totalWins ?? 0) {
+                        return (aggA?.totalWins ?? 0) > (aggB?.totalWins ?? 0)
+                    }
+                    // If wins are tied, lowest losses wins
+                    if (aggA?.totalLosses ?? 0) != (aggB?.totalLosses ?? 0) {
+                        return (aggA?.totalLosses ?? 0) < (aggB?.totalLosses ?? 0)
+                    }
+                    // 3. Points For (combined across seasons)
+                    if (aggA?.totalPointsFor ?? 0) != (aggB?.totalPointsFor ?? 0) {
+                        return (aggA?.totalPointsFor ?? 0) > (aggB?.totalPointsFor ?? 0)
+                    }
+                    // 4. Management %
+                    if (aggA?.managementPercent ?? 0) != (aggB?.managementPercent ?? 0) {
+                        return (aggA?.managementPercent ?? 0) > (aggB?.managementPercent ?? 0)
+                    }
+                    // 5. Display name A-Z
+                    let nameA = aggA?.latestDisplayName ?? a.name
+                    let nameB = aggB?.latestDisplayName ?? b.name
+                    return nameA < nameB
+                }
+                if let idx = ordered.firstIndex(where: { $0.id == team.id }) {
+                    return ordinal(idx + 1)
+                }
+                return "--"
+            }
+            let asc = ascendingBetterStandings.contains(category)
+            let sorted = teams.sorted {
+                let av = numericValueAllTime(category, for: $0)
+                let bv = numericValueAllTime(category, for: $1)
+                return asc ? av < bv : av > bv
+            }
+            if let idx = sorted.firstIndex(where: { $0.id == team.id }) {
+                return ordinal(idx + 1)
+            }
+            return "--"
+        }
+        if category == .teamStanding {
+            let ordered = teams.sorted { $0.leagueStanding < $1.leagueStanding }
+            if let idx = ordered.firstIndex(where: { $0.id == team.id }) { return ordinal(idx + 1) }
+            return "--"
+        }
+        if category == .pointsScoredAgainstStanding {
+            let ranked = teams.sorted {
+                ($0.pointsScoredAgainst ?? .greatestFiniteMagnitude) <
+                ($1.pointsScoredAgainst ?? .greatestFiniteMagnitude)
+            }
+            if let idx = ranked.firstIndex(where: { $0.id == team.id }) { return ordinal(idx + 1) }
+            return "--"
+        }
+        if category == .averagePointsScoredAgainstPerWeekStanding {
+            let ranked = teams.sorted {
+                averagePointsAgainstPerWeek($0) < averagePointsAgainstPerWeek($1)
+            }
+            if let idx = ranked.firstIndex(where: { $0.id == team.id }) { return ordinal(idx + 1) }
+            return "--"
+        }
+        guard let statType = underlyingStatForStanding(category) else { return "--" }
+        let scored: [(TeamStanding, Double)] = teams.map {
+            let val = (DSDStatsService.shared.stat(for: $0, type: statType) as? Double) ?? 0
+            return ($0, val)
+        }
+        let asc = ascendingBetterStandings.contains(category)
+        let ranked = scored.sorted { asc ? $0.1 < $1.1 : $0.1 > $1.1 }
+        if let index = ranked.firstIndex(where: { $0.0.id == team.id }) { return ordinal(index + 1) }
+        return "--"
+    }
+   
+    private func formatRawStat(_ raw: Any, category: Category) -> String {
+        switch raw {
+        case let v as Double:
+            if category == .managementPercent ||
+                category == .offensiveManagementPercent ||
+                category == .defensiveManagementPercent {
+                return String(format: "%.1f%%", v)
+            }
+            // Always show two decimal places for all other numeric values
+            return String(format: "%.2f", v)
+        case let v as Int:
+            // Convert Int to Double and show with two decimal places
+            return String(format: "%.2f", Double(v))
+        case let v as String: return v
+        case let arr as [String]:
+            if arr.isEmpty { return "—" }
+            return arr.count == 1 ? arr[0] : "\(arr.count)x"
+        case let tuple as (position: String, avg: Double):
+            return "\(tuple.position) \(String(format: "%.2f", tuple.avg))"
+        default: return "—"
+        }
+    }
+    private func aggregatedValue(category: Category, aggregate: AggregatedTeamStats) -> String? {
+        switch category {
+        case .pointsFor: return String(format: "%.2f", aggregate.totalPointsFor)
+        case .maxPointsFor: return String(format: "%.2f", aggregate.totalMaxPointsFor)
+        case .managementPercent: return String(format: "%.1f%%", aggregate.aggregatedManagementPercent)
+        case .teamAveragePPW: return String(format: "%.2f", aggregate.avgTeamPPW)
+        case .offensivePointsFor: return aggregate.offensivePointsFor.map { String(format: "%.2f", $0) }
+        case .defensivePointsFor: return aggregate.defensivePointsFor.map { String(format: "%.2f", $0) }
+        case .maxOffensivePointsFor:
+            return aggregate.totalMaxOffensivePointsFor.map { String(format: "%.2f", $0) }
+        case .maxDefensivePointsFor:
+            return aggregate.totalMaxDefensivePointsFor.map { String(format: "%.2f", $0) }
+        case .averageOffensivePPW: return aggregate.avgOffPPW.map { String(format: "%.2f", $0) }
+        case .averageDefensivePPW: return aggregate.avgDefPPW.map { String(format: "%.2f", $0) }
+        case .championships: return String(format: "%.0f", Double(aggregate.championships))
+        case .recordAllTime:
+            return "\(aggregate.totalWins)-\(aggregate.totalLosses)\(aggregate.totalTies > 0 ? "-\(aggregate.totalTies)" : "")"
+        default: return nil
+        }
+    }
+   
+    // MARK: Persistence & Initialization
+    private func initializeDefaultSelections() {
+        if selectedStandings.isEmpty { selectedStandings = defaultStandings }
+        if selectedTeamStats.isEmpty { selectedTeamStats = defaultTeam }
+        if selectedOffensiveStats.isEmpty { selectedOffensiveStats = defaultOffensive }
+        if selectedDefensiveStats.isEmpty { selectedDefensiveStats = defaultDefensive }
+    }
+    private func currentUsernameForKey() -> String { authViewModel.currentUsername ?? "anon" }
+    private func loadCustomizationIfAvailable(force: Bool = false) {
+        guard selectedLeague != nil else { return }
+        if customizationLoaded && !force { return }
+        if let loaded = DashboardCustomizationStore.shared.load(
+            for: currentUsernameForKey(),
+            leagueId: selectedLeague?.id
+        ) {
+            if !loaded.standings.isEmpty { selectedStandings = loaded.standings }
+            if !loaded.team.isEmpty { selectedTeamStats = loaded.team }
+            if !loaded.offensive.isEmpty { selectedOffensiveStats = loaded.offensive }
+            if !loaded.defensive.isEmpty { selectedDefensiveStats = loaded.defensive }
+        }
+        customizationLoaded = true
+    }
+    private func persistCustomization() {
+        guard customizationLoaded else { return }
+        let sets = CustomizationSets(
+            standings: selectedStandings,
+            team: selectedTeamStats,
+            offensive: selectedOffensiveStats,
+            defensive: selectedDefensiveStats
+        )
+        DashboardCustomizationStore.shared.save(
+            sets: sets,
+            for: currentUsernameForKey(),
+            leagueId: selectedLeague?.id
+        )
+    }
+    private func enforceIntegrityAndPersist() {
+        if selectedStandings.isEmpty { selectedStandings = defaultStandings }
+        if selectedTeamStats.isEmpty { selectedTeamStats = defaultTeam }
+        if selectedOffensiveStats.isEmpty { selectedOffensiveStats = defaultOffensive }
+        if selectedDefensiveStats.isEmpty { selectedDefensiveStats = defaultDefensive }
+        persistCustomization()
+    }
+    private func syncInitialSelections(replaceTeam: Bool) {
+        guard let league = selectedLeague else { return }
+        if selectedDate.isEmpty { selectedDate = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time" }
+       
+        // Always prioritize user's team when possible
+        if let userTeam = authViewModel.userTeam,
+           let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
+           let userTeamMatch = latestSeason.teams.first(where: { $0.name == userTeam }) {
+            selectedTeamId = userTeamMatch.id
+            selectedTeamName = userTeamMatch.name
+            appSelection.selectedTeamId = userTeamMatch.id
+            print("Auto-selected user's team: \(userTeamMatch.name)")
+        } else if replaceTeam, selectedTeamName == nil {
+            // Fallback to first team if user's team not found
+            let firstTeam = teams.first
+            selectedTeamId = firstTeam?.id
+            selectedTeamName = firstTeam?.name
+            appSelection.selectedTeamId = firstTeam?.id
+        }
+       
+        appSelection.selectedSeason = selectedDate
+    }
+    private func handleSeasonChange() {
+        appSelection.selectedSeason = selectedDate
+        guard selectedLeague != nil else { return }
+        if let name = selectedTeamName {
+            if isAllTimeMode {
+                if let match = teams.first(where: { $0.name == name }) {
+                    selectedTeamId = match.id
+                    appSelection.selectedTeamId = match.id
+                    return
+                }
+            } else if let match = teams.first(where: { $0.name == name }) {
+                selectedTeamId = match.id
+                appSelection.selectedTeamId = match.id
+                return
+            }
+        }
+        if !suppressAutoUserTeam, let ut = authViewModel.userTeam {
+            selectedTeamId = teams.first { $0.name == ut }?.id ?? teams.first?.id
+        } else if selectedTeamId == nil {
+            selectedTeamId = teams.first?.id
+        }
+        appSelection.selectedTeamId = selectedTeamId
+    }
+    private func fallbackFirstTeamName() -> String? {
+        selectedLeague?.seasons.sorted { $0.id < $1.id }.last?.teams.first?.name
+    }
+   
+    private func selectAppropriateLeague() {
+        guard !appSelection.leagues.isEmpty else { return }
+        if let current = appSelection.selectedLeagueId,
+           appSelection.leagues.contains(where: { $0.id == current }) {
+            return
+        }
+        let key = "dsd.lastSelectedLeague.\(currentUsernameForKey())"
+        if let saved = UserDefaults.standard.string(forKey: key),
+           appSelection.leagues.contains(where: { $0.id == saved }) {
+            appSelection.selectedLeagueId = saved
+        } else {
+            // Fallback to the first league sorted by name
+            appSelection.selectedLeagueId = appSelection.leagues.sorted { $0.name < $1.name }.first?.id
+        }
+    }
+   
+    // MARK: Flip Tilt Modifier
+    struct FlipTiltModifier: ViewModifier {
+        let progress: CGFloat
+        let enabled: Bool
+        let glow: Color
+        let reducedMotion: Bool
+        func body(content: Content) -> some View {
+            content
+                .modifier(XTilt(progress: progress, enabled: enabled && !reducedMotion))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(glow.opacity(enabled ? 0.55 : 0), lineWidth: enabled ? 2 : 0)
+                        .blur(radius: enabled ? 1.5 : 0)
+                )
+                .animation(.easeInOut(duration: reducedMotion ? 0.25 : 0.55), value: enabled)
+        }
+        struct XTilt: ViewModifier {
+            let progress: CGFloat
+            let enabled: Bool
+            func body(content: Content) -> some View {
+                guard enabled else { return AnyView(content) }
+                let xAngle = 15.0 * progress
+                return AnyView(
+                    content
+                        .rotation3DEffect(.degrees(xAngle),
+                                          axis: (x: 1, y: 0, z: 0),
+                                          perspective: 0.9/1200)
+                        .shadow(color: .black.opacity(0.5 - 0.3 * Double(min(progress,1))),
+                                radius: 16, x: 0, y: 8)
+                )
+            }
+        }
+    }
+   
+    struct SDSettingsView: View {
+        @AppStorage("statDropPersonality") var personality: StatDropPersonality = .classicESPN
+
+        var body: some View {
+            List {
+                Section(header: Text("AI Personality")) {
+                    Picker("Select Personality", selection: $personality) {
+                        ForEach(StatDropPersonality.allCases) { p in
+                            VStack(alignment: .leading) {
+                                Text(p.displayName)
+                                Text(p.description).font(.caption).foregroundColor(.gray)
+                            }.tag(p)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+                // Add more customizations here as needed, e.g.:
+                // Section("Analysis Options") {
+                //     Toggle("Include Comical Elements", isOn: $includeComical)
+                //     Toggle("Use Detailed Stats", isOn: $detailedStats)
+                // }
+            }
+            .navigationTitle("Stat Drop Settings")
+        }
+    }
+   
+    // MARK: Load Saved Leagues
+    private func loadSavedLeagues() {
+        guard let username = authViewModel.currentUsername else { return }
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let leaguesDir = appSupport.appendingPathComponent("SleeperLeagues/\(username)", isDirectory: true)
+        let leaguesFile = leaguesDir.appendingPathComponent("leagues.json")
+        do {
+            if fm.fileExists(atPath: leaguesFile.path) {
+                let data = try Data(contentsOf: leaguesFile)
+                let loadedLeagues = try JSONDecoder().decode([LeagueData].self, from: data)
+                appSelection.leagues = loadedLeagues.sorted { $0.name < $1.name }
+            }
+        } catch {
+            print("Error loading leagues: \(error)")
+        }
+    }
+}
+
+struct StandingsExplorerView: View {
+    let teams: [TeamStanding]
+    let myTeamId: String?
+    let categories: [Category]
+    let ascendingBetter: Set<Category>
+    @Binding var selected: Category
+    @Binding var searchText: String
+    @Binding var showGrid: Bool
+    let statProvider: (Category, TeamStanding) -> String
+    let rankProvider: (Category, TeamStanding) -> String
+    let colorForCategory: (Category) -> Color
+    let onClose: () -> Void
+
+    let isAllTimeMode: Bool
+    let ownerAggProvider: (TeamStanding) -> AggregatedOwnerStats?
+    let ascendingBetterStandings: Set<Category>
+
+    let allTimeOwnerStats: [String: AggregatedOwnerStats]?
+    @State private var internalScrollID = UUID()
+
+    // Helper to get the dashboard-selected team
+    private var selectedTeam: TeamStanding? {
+        guard let id = myTeamId else { return nil }
+        return teams.first(where: { $0.id == id })
+    }
+    // Helper to get the rank string for the selected team in the selected category
+    private var selectedTeamRank: String {
+        guard let team = selectedTeam else { return "--" }
+        return rankProvider(selected, team)
+    }
+    // Helper to get the display name for the selected team
+    private var selectedTeamDisplayName: String {
+        guard let team = selectedTeam else { return "--" }
+        return isAllTimeMode ? (ownerAggProvider(team)?.latestDisplayName ?? team.name) : team.name
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            headerBar
+            categoryChips
+            if showGrid { gridPlaceholder } else { rankingListView() }
+        }
+        .padding(10)
+        .background(Color.black.opacity(0.85))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            Text("Standings Explorer")
+                .font(.custom("Phatt", size: 22))
+                .foregroundColor(colorForCategory(selected))
+                .underline()
+            Spacer()
+        }
+    }
+
+    private var categoryChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(categories, id: \.self) { cat in
+                    let sel = cat == selected
+                    Text(cat.abbreviation)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(Capsule().fill(sel ? colorForCategory(cat).opacity(0.85) : Color.gray.opacity(0.25)))
+                        .overlay(
+                            Capsule().stroke(colorForCategory(cat).opacity(sel ? 1 : 0.4), lineWidth: 1)
+                        )
+                        .foregroundColor(sel ? .black : .white)
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                selected = cat
+                                internalScrollID = UUID()
+                            }
+                        }
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    private var filteredTeams: [TeamStanding] {
+        teams
+    }
+
+    private func rankingListView() -> some View {
+        let sorted = sortedTeams(for: selected, in: filteredTeams)
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(spacing: 6) {
+                    listHeader
+                    ForEach(Array(sorted.enumerated()), id: \.1.id) { (idx, team) in
+                        row(team: team, rank: idx + 1).id(team.id)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .onChange(of: selected) { _, _ in
+                let fresh = sortedTeams(for: selected, in: filteredTeams)
+                if let my = myTeamId, fresh.contains(where: { $0.id == my }) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation { proxy.scrollTo(my, anchor: .center) }
+                    }
+                }
+            }
+        }
+    }
+
+    private var listHeader: some View {
+        HStack(spacing: 0) {
+            Text("Rank")
+                .frame(width: 46, alignment: .leading)
+            Text("Team")
+                .frame(minWidth: 70, maxWidth: .infinity, alignment: .leading)
+            Text("Value")
+                .frame(width: 70, alignment: .trailing)
+        }
+        .font(.caption.bold())
+        .foregroundColor(colorForCategory(selected).opacity(0.9))
+        .padding(.horizontal, 6)
+    }
+
+    private func row(team: TeamStanding, rank: Int) -> some View {
+        let isMine = team.id == myTeamId
+        let val = statProvider(selected, team)
+        let displayName = isAllTimeMode ? (ownerAggProvider(team)?.latestDisplayName ?? team.name) : team.name
+        return HStack(spacing: 0) {
+            rankBadge(rank).frame(width: 46, alignment: .leading)
+            Text(displayName)
+                .font(.system(size: 13, weight: isMine ? .bold : .regular))
+                .foregroundColor(isMine ? colorForCategory(selected) : .white.opacity(0.85))
+                .lineLimit(1)
+                .frame(minWidth: 70, maxWidth: .infinity, alignment: .leading)
+            Text(val)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(.cyan)
+                .frame(width: 70, alignment: .trailing)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isMine ? colorForCategory(selected).opacity(0.12) : Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isMine ? colorForCategory(selected).opacity(0.6) : Color.clear, lineWidth: 1)
+        )
+    }
+
+    private func rankBadge(_ rank: Int) -> some View {
+        let (bg, fg): (Color, Color) = {
+            switch rank {
+            case 1: return (.yellow, .black)
+            case 2: return (.gray, .black)
+            case 3: return (.orange, .black)
+            default: return (.black.opacity(0.5), .white)
+            }
+        }()
+        return Text("\(rank)")
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(bg.opacity(rank <= 3 ? 1 : 0.6)))
+            .foregroundColor(fg)
+    }
+
+    private var gridPlaceholder: some View {
+        VStack {
+            Text("Grid mode coming soon")
+                .foregroundColor(.white.opacity(0.6))
+                .font(.caption)
+            Spacer()
+        }
+    }
+
+    private func sortedTeams(for cat: Category, in teams: [TeamStanding]) -> [TeamStanding] {
+        if isAllTimeMode && cat == .teamStanding {
+            if let cache = teams.first?.league?.allTimeOwnerStats {
+                return teams.sorted { allTimeStandingSort(a: $0, b: $1, cache: cache) }
+            }
+        }
+        let asc = ascendingBetter.contains(cat)
+        return teams.sorted { a, b in
+            let av = numericValue(cat, a)
+            let bv = numericValue(cat, b)
+            if av == bv {
+                let an = isAllTimeMode ? (ownerAggProvider(a)?.latestDisplayName ?? a.name) : a.name
+                let bn = isAllTimeMode ? (ownerAggProvider(b)?.latestDisplayName ?? b.name) : b.name
+                return an < bn
+            }
+            return asc ? av < bv : av > bv
+        }
+    }
+
+    private func numericValue(_ category: Category, _ team: TeamStanding) -> Double {
+        if isAllTimeMode, let agg = ownerAggProvider(team) {
+            switch category {
+            case .teamStanding: return Double(-team.leagueStanding)
+            case .pointsForStanding: return agg.totalPointsFor
+            case .averagePointsPerWeekStanding: return agg.teamPPW
+            case .averagePointsScoredAgainstPerWeekStanding:
+                let weeks = max(1, agg.weeksPlayed)
+                return agg.totalPointsScoredAgainst / Double(weeks)
+            case .maxPointsForStanding: return agg.totalMaxPointsFor
+            case .managementPercentStanding: return agg.managementPercent
+            case .offensiveManagementPercentStanding: return agg.offensiveManagementPercent // <-- ADTHIS
+            case .defensiveManagementPercentStanding: return agg.defensiveManagementPercent // <-- ADTHIS
+            case .offensiveStanding: return agg.totalOffensivePointsFor
+            case .defensiveStanding: return agg.totalDefensivePointsFor
+            case .pointsScoredAgainstStanding: return agg.totalPointsScoredAgainst
+            case .qbPPWStanding: return agg.positionAvgPPW["QB"] ?? 0
+            case .rbPPWStanding: return agg.positionAvgPPW["RB"] ?? 0
+            case .wrPPWStanding: return agg.positionAvgPPW["WR"] ?? 0
+            case .tePPWStanding: return agg.positionAvgPPW["TE"] ?? 0
+            case .kickerPPWStanding: return agg.positionAvgPPW["K"] ?? 0
+            case .dlPPWStanding: return agg.positionAvgPPW["DL"] ?? 0
+            case .lbPPWStanding: return agg.positionAvgPPW["LB"] ?? 0
+            case .dbPPWStanding: return agg.positionAvgPPW["DB"] ?? 0
+            case .individualQBPPWStanding: return agg.individualPositionPPW["QB"] ?? 0
+            case .individualRBPPWStanding: return agg.individualPositionPPW["RB"] ?? 0
+            case .individualWRPPWStanding: return agg.individualPositionPPW["WR"] ?? 0
+            case .individualTEPPWStanding: return agg.individualPositionPPW["TE"] ?? 0
+            case .individualKickerPPWStanding: return agg.individualPositionPPW["K"] ?? 0
+            case .individualDLPPWStanding: return agg.individualPositionPPW["DL"] ?? 0
+            case .individualLBPPWStanding: return agg.individualPositionPPW["LB"] ?? 0
+            case .individualDBPPWStanding: return agg.individualPositionPPW["DB"] ?? 0
+            default: return 0
+            }
+        }
+        switch category {
+        case .teamStanding: return Double(-team.leagueStanding)
+        case .pointsForStanding: return team.pointsFor
+        case .averagePointsPerWeekStanding: return team.teamPointsPerWeek
+        case .averagePointsScoredAgainstPerWeekStanding:
+            let val = averagePointsAgainstPerWeek(team)
+            return val.isFinite ? val : .greatestFiniteMagnitude
+        case .maxPointsForStanding: return team.maxPointsFor
+        case .managementPercentStanding:
+            return team.maxPointsFor > 0 ? (team.pointsFor / team.maxPointsFor) * 100 : 0
+        case .offensiveManagementPercentStanding:
+            return team.offensiveManagementPercent ?? 0 // <-- ADD THIS
+        case .defensiveManagementPercentStanding:
+            return team.defensiveManagementPercent ?? 0
+        case .offensiveStanding: return team.offensivePointsFor ?? 0
+        case .defensiveStanding: return team.defensivePointsFor ?? 0
+        case .pointsScoredAgainstStanding: return team.pointsScoredAgainst ?? 0
+        case .qbPPWStanding: return pos(team, .qbPositionPPW)
+        case .rbPPWStanding: return pos(team, .rbPositionPPW)
+        case .wrPPWStanding: return pos(team, .wrPositionPPW)
+        case .tePPWStanding: return pos(team, .tePositionPPW)
+        case .kickerPPWStanding: return pos(team, .kickerPPW)
+        case .dlPPWStanding: return pos(team, .dlPositionPPW)
+        case .lbPPWStanding: return pos(team, .lbPositionPPW)
+        case .dbPPWStanding: return pos(team, .dbPositionPPW)
+        case .individualQBPPWStanding: return pos(team, .individualQBPPW)
+        case .individualRBPPWStanding: return pos(team, .individualRBPPW)
+        case .individualWRPPWStanding: return pos(team, .individualWRPPW)
+        case .individualTEPPWStanding: return pos(team, .individualTEPPW)
+        case .individualKickerPPWStanding: return pos(team, .individualKickerPPW)
+        case .individualDLPPWStanding: return pos(team, .individualDLPPW)
+        case .individualLBPPWStanding: return pos(team, .individualLBPPW)
+        case .individualDBPPWStanding: return pos(team, .individualDBPPW)
+        default: return 0
+        }
+    }
+
+    private func pos(_ team: TeamStanding, _ t: DSDStatsService.StatType) -> Double {
+        (DSDStatsService.shared.stat(for: team, type: t) as? Double) ?? 0
+    }
+} // <--- THIS is the closing brace for StandingsExplorerView
+
+// MARK: - Global Helpers
+
+private func formatNumber(_ value: Double?, decimals: Int = 2) -> String {
+    guard let v = value else { return "—" }
+    return String(format: "%.\(decimals)f", v)
+}
+private func ordinal(_ n: Int) -> String { "\(n)\(ordinalSuffix(n))" }
+
+private func ordinalSuffix(_ n: Int) -> String {
+    let mod10 = n % 10, mod100 = n % 100
+    if (11...13).contains(mod100) { return "th" }
+    switch mod10 {
+    case 1: return "st"
+    case 2: return "nd"
+    case 3: return "rd"
+    default: return "th"
+    }
+}
+
+private func averagePointsAgainstPerWeek(_ team: TeamStanding) -> Double {
+    guard let pa = team.pointsScoredAgainst, team.teamPointsPerWeek > 0 else {
+        return .greatestFiniteMagnitude
+    }
+    let approxWeeks = team.pointsFor / max(0.01, team.teamPointsPerWeek)
+    return pa / max(1, approxWeeks)
+}
+
+private func computedAverageSeasonStanding(ownerId: String, in league: LeagueData) -> Double {
+    let standings = league.seasons.compactMap {
+        $0.teams.first(where: { $0.ownerId == ownerId })?.leagueStanding
+    }
+    guard !standings.isEmpty else { return Double.greatestFiniteMagnitude }
+    return Double(standings.reduce(0,+)) / Double(standings.count)
+}
+
+private func allTimeStandingSort(a: TeamStanding, b: TeamStanding, cache: [String: AggregatedOwnerStats]) -> Bool {
+    let aggA = cache[a.ownerId]
+    let aggB = cache[b.ownerId]
+    if (aggA?.championships ?? 0) != (aggB?.championships ?? 0) {
+        return (aggA?.championships ?? 0) > (aggB?.championships ?? 0)
+    }
+    if (aggA?.totalWins ?? 0) != (aggB?.totalWins ?? 0) {
+        return (aggA?.totalWins ?? 0) > (aggB?.totalWins ?? 0)
+    }
+    if (aggA?.totalLosses ?? 0) != (aggB?.totalLosses ?? 0) {
+        return (aggA?.totalLosses ?? 0) < (aggB?.totalLosses ?? 0)
+    }
+    if (aggA?.totalPointsFor ?? 0) != (aggB?.totalPointsFor ?? 0) {
+        return (aggA?.totalPointsFor ?? 0) > (aggB?.totalPointsFor ?? 0)
+    }
+    if (aggA?.managementPercent ?? 0) != (aggB?.managementPercent ?? 0) {
+        return (aggA?.managementPercent ?? 0) > (aggB?.managementPercent ?? 0)
+    }
+    let nameA = aggA?.latestDisplayName ?? a.name
+    let nameB = aggB?.latestDisplayName ?? b.name
+    return nameA < nameB
+}
+
+// MARK: - Preview
+
+struct DSDDashboard_Previews: PreviewProvider {
+    static var previews: some View {
+        DSDDashboard(selectedTab: .constant(.dashboard))
+            .environmentObject(AuthViewModel())
+            .environmentObject(AppSelection())
+    }
+}
+
