@@ -33,14 +33,25 @@ final class DSDStatsService {
                  playoffDefensivePointsFor, playoffDefensivePPW, playoffDefensiveManagementPercent
     }
     
+    // MARK: - Helper: Only include completed weeks for season stats
+    private func validWeeksForSeason(_ season: SeasonData, currentWeek: Int) -> [Int] {
+        let allWeeks = season.matchupsByWeek?.keys.sorted() ?? []
+        return allWeeks.filter { $0 < currentWeek }
+    }
+    
     // MARK: Per-season stats (TeamStanding)
     
-    func stat(for team: TeamStanding, type: StatType) -> Any? {
+    func stat(for team: TeamStanding, type: StatType, league: LeagueData? = nil) -> Any? {
         switch type {
-        case .pointsFor: return team.pointsFor
-        case .maxPointsFor: return team.maxPointsFor
-        case .managementPercent: return team.managementPercent
-        case .teamAveragePPW: return team.teamPointsPerWeek
+        case .pointsFor:
+            return filteredPointsFor(team: team, league: league)
+        case .maxPointsFor:
+            return filteredMaxPointsFor(team: team, league: league)
+        case .managementPercent:
+            return filteredManagementPercent(team: team, league: league)
+        case .teamAveragePPW:
+            return filteredTeamAveragePPW(team: team, league: league)
+        // ... All other cases unchanged from original code, see below ...
         case .winLossRecord: return team.winLossRecord
         case .playoffRecord: return team.playoffRecord
         case .championships: return team.championships ?? 0
@@ -94,35 +105,30 @@ final class DSDStatsService {
         case .tradesCompletedSeason: return team.tradesCompleted ?? 0
         case .playoffPointsFor, .playoffPPW, .playoffManagementPercent, .playoffOffensivePointsFor, .playoffOffensivePPW, .playoffOffensiveManagementPercent, .playoffDefensivePointsFor, .playoffDefensivePPW, .playoffDefensiveManagementPercent: return nil
         case .waiverMovesAllTime:
-            // Aggregate all waiver moves for this owner across all seasons
             if let league = team.league,
                let stats = league.allTimeOwnerStats?[team.ownerId] {
                 return stats.totalWaiverMoves
             }
             return nil
         case .faabSpentAllTime:
-            // Aggregate all FAAB spent for this owner across all seasons
             if let league = team.league,
                let stats = league.allTimeOwnerStats?[team.ownerId] {
                 return stats.totalFAABSpent
             }
             return nil
         case .faabAvgPerMoveAllTime:
-            // Average FAAB spent per waiver move all time
             if let league = team.league,
                let stats = league.allTimeOwnerStats?[team.ownerId] {
                 return stats.totalWaiverMoves > 0 ? (stats.totalFAABSpent / Double(stats.totalWaiverMoves)) : 0
             }
             return 0.0
         case .tradesCompletedAllTime:
-            // Aggregate all trades completed for this owner across all seasons
             if let league = team.league,
                let stats = league.allTimeOwnerStats?[team.ownerId] {
                 return stats.totalTradesCompleted
             }
             return nil
         case .tradesPerSeasonAverage:
-            // Average trades per season all time
             if let league = team.league,
                let stats = league.allTimeOwnerStats?[team.ownerId] {
                 return stats.seasonsIncluded.isEmpty ? 0 :
@@ -132,6 +138,55 @@ final class DSDStatsService {
         }
     }
     
+    // MARK: Week-exclusion patch helpers for season aggregations
+
+    // Use only completed weeks for season-long stat aggregations.
+    private func filteredPointsFor(team: TeamStanding, league: LeagueData?) -> Double {
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }) else {
+            return team.pointsFor
+        }
+        let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
+        let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
+        return team.roster
+            .flatMap { $0.weeklyScores }
+            .filter { validWeeks.contains($0.week) }
+            .reduce(0) { $0 + $1.points }
+    }
+
+    private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?) -> Double {
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }) else {
+            return team.maxPointsFor
+        }
+        let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
+        let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
+        // For maxPointsFor, if you have per-week max, use it; otherwise fallback
+        if let maxPerWeek = team.weeklyActualLineupPoints {
+            return validWeeks.compactMap { maxPerWeek[$0] }.reduce(0, +)
+        }
+        return team.maxPointsFor
+    }
+
+    private func filteredManagementPercent(team: TeamStanding, league: LeagueData?) -> Double {
+        let pf = filteredPointsFor(team: team, league: league)
+        let maxPF = filteredMaxPointsFor(team: team, league: league)
+        return maxPF > 0 ? (pf / maxPF) * 100 : 0
+    }
+
+    private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?) -> Double {
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }) else {
+            return team.teamPointsPerWeek
+        }
+        let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
+        let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
+        let pf = filteredPointsFor(team: team, league: league)
+        return validWeeks.isEmpty ? 0 : pf / Double(validWeeks.count)
+    }
+    
+    // --- Existing helpers below ---
+
     func stat(for agg: AggregatedOwnerStats, type: StatType) -> Any? {
         switch type {
         case .pointsFor: return agg.totalPointsFor

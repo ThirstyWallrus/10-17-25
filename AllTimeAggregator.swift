@@ -79,30 +79,24 @@ struct AllTimeAggregator {
             // Head-to-head aggregation for this season vs other current owners
             for oppTeam in season.teams where oppTeam.ownerId != ownerId && currentIdsSet.contains(oppTeam.ownerId) {
                 guard let uRid = Int(team.id), let oRid = Int(oppTeam.id) else { continue }
-                // FIX: SleeperMatchup does not have roster_ids or week
-                // So we cannot filter by $0.roster_ids.contains(uRid) etc or $0.week < playoffStart
-                // Instead, we must filter by rosterId and matchupId
                 let h2hMatchups = (season.matchups ?? []).filter { m in
                     m.rosterId == uRid || m.rosterId == oRid
                 }
                 for m in h2hMatchups {
-                    // There is only one rosterId per SleeperMatchup (not an array)
-                    // To get both sides, we need to get the other entry for the same matchupId
                     let allEntries = season.matchups?.filter { $0.matchupId == m.matchupId } ?? []
                     guard allEntries.count == 2 else { continue }
                     guard let uEntry = allEntries.first(where: { $0.rosterId == uRid }),
                           let oEntry = allEntries.first(where: { $0.rosterId == oRid }) else { continue }
                     let uPts = uEntry.points
                     let oPts = oEntry.points
-                    if uPts == 0 && oPts == 0 { continue } // Skip unplayed matchups
+                    if uPts == 0 && oPts == 0 { continue }
 
-                    // UPDATED: Use historical entries for max (instead of team.roster)
                     let weekMatchups = season.matchupsByWeek?[m.matchupId] ?? []
                     guard let uEntry2 = weekMatchups.first(where: { $0.roster_id == uRid }),
                           let oEntry2 = weekMatchups.first(where: { $0.roster_id == oRid }) else { continue }
 
                     let uMax = computeMaxForEntry(entry: uEntry2, lineupConfig: team.lineupConfig ?? [:], playerCache: playerCache).total
-                    let oMax = computeMaxForEntry(entry: oEntry2, lineupConfig: team.lineupConfig ?? [:], playerCache: playerCache).total  // Assume same lineup config
+                    let oMax = computeMaxForEntry(entry: oEntry2, lineupConfig: team.lineupConfig ?? [:], playerCache: playerCache).total
 
                     let uMgmt = uMax > 0 ? (uPts / uMax) * 100 : 0.0
                     let oMgmt = oMax > 0 ? (oPts / oMax) * 100 : 0.0
@@ -129,7 +123,6 @@ struct AllTimeAggregator {
                 }
             }
 
-            // UPDATED: Recompute from raw matchupsByWeek (historical data)
             championships += team.championships ?? 0
 
             totalWaiverMoves += team.waiverMoves ?? 0
@@ -143,12 +136,25 @@ struct AllTimeAggregator {
                 actualWeeks += weeks
             }
 
-            // ---------- UPDATED SECTION: Recompute from historical matchupsByWeek ----------
+            // ---------- UPDATED SECTION: Defensive aggregation of weeks ----------
             let matchupsByWeek = season.matchupsByWeek ?? [:]
             let rosterId = Int(team.id) ?? -1
-            for (week, entries) in matchupsByWeek.sorted(by: { $0.key < $1.key }) {
-                guard week < playoffStart else { continue }  // Regular season only
-                guard let entry = entries.first(where: { $0.roster_id == rosterId }) else { continue }
+
+            // Defensive filtering: exclude current week ONLY IF more than one week is present
+            let allWeeks = matchupsByWeek.keys.sorted()
+            var filteredWeeks = allWeeks
+            if let currentWeek = allWeeks.max(), allWeeks.count > 1 {
+                filteredWeeks = allWeeks.filter { $0 != currentWeek }
+            }
+            // If filtering would leave zero, revert to including all weeks
+            if filteredWeeks.isEmpty {
+                filteredWeeks = allWeeks
+            }
+
+            for week in filteredWeeks {
+                guard week < playoffStart else { continue }
+                guard let entries = matchupsByWeek[week],
+                      let entry = entries.first(where: { $0.roster_id == rosterId }) else { continue }
 
                 distinctWeeks.insert("\(seasonId)-\(week)")
 
@@ -266,6 +272,7 @@ struct AllTimeAggregator {
     }
 
     // ... rest of your file unchanged ...
+
     private static func maxPointsForWeek(team: TeamStanding, week: Int) -> (total: Double, off: Double, def: Double) {
         let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
             if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
@@ -287,7 +294,6 @@ struct AllTimeAggregator {
                 let candidates = offPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
                 let top = Array(candidates.prefix(count))
                 maxOff += top.reduce(0.0) { $0 + $1.score }
-                // Remove used players
                 offPlayerList.removeAll { used in top.contains { $0.id == used.id } }
             }
         }
@@ -309,7 +315,6 @@ struct AllTimeAggregator {
                 let candidates = defPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
                 let top = Array(candidates.prefix(count))
                 maxDef += top.reduce(0.0) { $0 + $1.score }
-                // Remove used players
                 defPlayerList.removeAll { used in top.contains { $0.id == used.id } }
             }
         }
@@ -483,7 +488,7 @@ struct AllTimeAggregator {
         let offPPW = weeksPlayed > 0 ? totalOffPF / Double(weeksPlayed) : 0
         let defPPW = weeksPlayed > 0 ? totalDefPF / Double(weeksPlayed) : 0
 
-        let isChampion = (weeksPlayed > 0 && losses == 0)  // Simple logic: Undefeated in playoffs = champion (adjust if needed for byes/multi-round)
+        let isChampion = (weeksPlayed > 0 && losses == 0)
 
         return PlayoffStats(
             pointsFor: totalPF,
@@ -512,30 +517,25 @@ struct AllTimeAggregator {
 func allPlayoffMatchupsForOwner(ownerId: String, league: LeagueData) -> [SleeperMatchup] {
     var all: [SleeperMatchup] = []
     for season in league.seasons {
-        // Get playoff team count from league/season settings (e.g. from Sleeper API)
-        let playoffTeamsCount = season.playoffTeamsCount ?? 4 // Or fetch from settings
+        let playoffTeamsCount = season.playoffTeamsCount ?? 4
         let playoffSeededTeams = season.teams.sorted { $0.leagueStanding < $1.leagueStanding }
             .prefix(playoffTeamsCount)
         guard playoffSeededTeams.contains(where: { $0.ownerId == ownerId }) else { continue }
 
-        // Find bracket weeks: typically first N weeks after playoffStartWeek
         let playoffStart = season.playoffStartWeek ?? 14
-        let bracketWeeks: Set<Int> = Set(playoffStart..<(playoffStart + Int(ceil(log2(Double(playoffTeamsCount))))))
-        
-        // Get season matchups
+        let bracketWeeks: Set<Int> = Set(playoffStart..<(playoffStart + Int(ceil(log2(Double(playoffTeamsCount)))))
+        )
+
         let seasonMatchups: [SleeperMatchup] = season.matchups ?? []
         let ownerTeam = season.teams.first(where: { $0.ownerId == ownerId })
         let ownerRosterId = ownerTeam.flatMap { Int($0.id) } ?? -1
-        // Use rosterId and matchupId to filter
         let ownerMatchups = seasonMatchups.filter { m in
             bracketWeeks.contains(m.matchupId) && m.rosterId == ownerRosterId
         }
-        // Only include up to first playoff loss—for this owner
         var eliminated = false
         for matchup in ownerMatchups.sorted(by: { $0.matchupId < $1.matchupId }) {
             if eliminated { break }
             all.append(matchup)
-            // Determine if owner lost this matchup
             if didOwnerLoseMatchup(ownerId: ownerId, matchup: matchup, season: season) {
                 eliminated = true
             }
@@ -544,16 +544,12 @@ func allPlayoffMatchupsForOwner(ownerId: String, league: LeagueData) -> [Sleeper
     return all
 }
 
-// --- Implement these helpers for your data model ---
-
 func isOwnerRoster(ownerId: String, rosterId: Int, season: SeasonData) -> Bool {
-    // Map a Sleeper rosterId to your ownerId for this season.
     return season.teams.first(where: { $0.ownerId == ownerId })?.id == String(rosterId)
 }
 func didOwnerLoseMatchup(ownerId: String, matchup: SleeperMatchup, season: SeasonData) -> Bool {
     guard let ownerTeam = season.teams.first(where: { $0.ownerId == ownerId }) else { return false }
     let myRosterId = Int(ownerTeam.id) ?? -1
-    // Find both entries for this matchup
     let allEntries = season.matchups?.filter { $0.matchupId == matchup.matchupId } ?? []
     guard allEntries.count == 2 else { return false }
     guard let myEntry = allEntries.first(where: { $0.rosterId == myRosterId }),
@@ -565,6 +561,6 @@ func didOwnerLoseMatchup(ownerId: String, matchup: SleeperMatchup, season: Seaso
 
 extension Collection {
     subscript(safe at: Index) -> Element? {
-        indices.contains(at) ? self[at] : nil
+        indices.contains(at) ? self[at] : self[at]
     }
 }

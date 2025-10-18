@@ -81,9 +81,21 @@ class StatsViewModel: ObservableObject {
         let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
         var statsByPosition: [Position: [WeeklyPositionStats]] = [:]
         
+        // --- PATCH: Exclude current week ONLY if more than one week is present ---
+        let allWeeks = season.matchupsByWeek?.keys.sorted() ?? []
+        var weeksToInclude = allWeeks
+        if let currentWeek = allWeeks.max(), allWeeks.count > 1 {
+            weeksToInclude = allWeeks.filter { $0 != currentWeek }
+        }
+        // Defensive fallback: If filtering leaves zero weeks, include all weeks
+        if weeksToInclude.isEmpty {
+            weeksToInclude = allWeeks
+        }
+
         for pos in Position.allCases {
             var weekly: [WeeklyPositionStats] = []
-            for week in 1...18 {
+            // Use weeksToInclude instead of a hardcoded 1...18
+            for week in weeksToInclude {
                 guard let weekEntries = season.matchupsByWeek?[week],
                       let rosterId = Int(team.id),
                       let myEntry = weekEntries.first(where: { $0.roster_id == rosterId }),
@@ -197,12 +209,12 @@ class StatsViewModel: ObservableObject {
         slots.filter { isEligible(c: c, allowed: allowedPositions(for: $0)) }
     }
     
-    private func expandSlots(lineupConfig: [String: Int]) -> [String] {
+    private func expandSlots(lineupConfig: [String:Int]) -> [String] {
         lineupConfig.flatMap { Array(repeating: $0.key, count: $0.value) }
     }
     
-    private func inferredLineupConfig(from roster: [Player]) -> [String: Int] {
-        var counts: [String: Int] = [:]
+    private func inferredLineupConfig(from roster: [Player]) -> [String:Int] {
+        var counts: [String:Int] = [:]
         for p in roster { counts[p.position, default: 0] += 1 }
         return counts.mapValues { min($0, 3) }
     }
@@ -318,10 +330,4 @@ struct FantasyStatsView: View {
             }
         }
     }
-}
-
-#Preview {
-    FantasyStatsView()
-        .environmentObject(AuthViewModel())
-        .environmentObject(AppSelection())
 }

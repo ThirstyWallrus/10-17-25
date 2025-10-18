@@ -1,4 +1,3 @@
-//```swift
 //
 //  MyTeamView.swift (Refactored to AppSelection Single Source of Truth)
 //  - Removed local leaguePickerId/seasonPicker/teamPickerId
@@ -285,9 +284,13 @@ struct MyTeamView: View {
     private var statDropMenu: some View {
         Menu {
             if isStatDropActive {
-                Button("Back to Stats") { isStatDropActive = false }
+                Button(action: { isStatDropActive = false }) {
+                    Text("Back to Stats")
+                }
             } else {
-                Button("View DSD") { isStatDropActive = true }
+                Button(action: { isStatDropActive = true }) {
+                    Text("View DSD")
+                }
             }
         } label: {
             menuLabel("DSD")
@@ -826,7 +829,7 @@ struct MyTeamView: View {
         var playerScores: [String: Double] = [:]
         var playerPos: [String: String] = [:]
         for player in team.roster {
-            if let score = player.weeklyScores.first { $0.week == week }?.points {
+            if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
                 playerScores[player.id] = score
                 playerPos[player.id] = player.position
             }
@@ -942,4 +945,3 @@ private extension Text {
         self.font(.headline.bold()).foregroundColor(.orange)
     }
 }
-

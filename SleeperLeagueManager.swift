@@ -334,6 +334,14 @@ class SleeperLeagueManager: ObservableObject {
         leagues.forEach { DatabaseManager.shared.saveLeague($0) }
     }
 
+    // MARK: - PATCH: Helper to get valid weeks for season stat aggregation
+
+    /// Returns only completed weeks (i.e., weeks < currentWeek) for a given season.
+    private func validWeeksForSeason(_ season: SeasonData, currentWeek: Int) -> [Int] {
+        let allWeeks = season.matchupsByWeek?.keys.sorted() ?? []
+        return allWeeks.filter { $0 < currentWeek }
+    }
+
     // MARK: - Public Import
 
     func fetchAndImportSingleLeague(leagueId: String, username: String) async throws {
@@ -618,19 +626,13 @@ class SleeperLeagueManager: ObservableObject {
 
             let allWeeks = matchupsByWeek.keys.sorted()
             let currentWeek = sleeperLeague.currentWeek
-            let weeksToUse = allWeeks.filter { week in
-                guard let entries = matchupsByWeek[week],
-                      let myEntry = entries.first(where: { $0.roster_id == roster.roster_id }),
-                      let starters = myEntry.starters else { return false }
-                return true
-            }
+            // --- PATCH: Use only completed weeks for season-long stats ---
+            let completedWeeks = allWeeks.filter { $0 < currentWeek }
+            var weeksToUse = completedWeeks
             var weeksCounted = 0
             var actualPosTotals: [String: Double] = [:]
             var actualPosStartCounts: [String: Int] = [:]
             var actualPosWeeks: [String: Set<Int>] = [:]
-
-            // --- PATCH: Accurate PF Calculation for Started Players (even if dropped/traded) ---
-            // Find the section in buildTeams that computes actualTotal
 
             for week in weeksToUse {
                 guard let allEntries = matchupsByWeek[week],
@@ -640,8 +642,6 @@ class SleeperLeagueManager: ObservableObject {
                 var weekHadValidScore = false
                 var thisWeekActual = 0.0
 
-                // PATCH: Use the actual starter IDs and their points from matchup data,
-                // and use global playerCache for position info if needed.
                 if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
                     let slots = orderedSlots
                     let paddedStarters: [String] = {
@@ -657,7 +657,6 @@ class SleeperLeagueManager: ObservableObject {
                         let slotName = slots[idx]
                         let pid = paddedStarters[idx]
 
-                        // PATCH: Find player position from global playerCache if not on current roster
                         let player = players.first(where: { $0.id == pid })
                             ?? {
                                 if let raw = allPlayers[pid] {
@@ -691,7 +690,6 @@ class SleeperLeagueManager: ObservableObject {
 
                         actualStarterPosTotals[creditedPosition, default: 0] += 1
 
-                        // PATCH: Use the actual points from playersPoints
                         let pts: Double = playersPoints[pid] ?? 0.0
                         if pts != 0.0 { weekHadValidScore = true }
                         actualTotal += pts
@@ -713,7 +711,6 @@ class SleeperLeagueManager: ObservableObject {
                     }
                 }
             
-
                 let candidates: [Candidate] = players.compactMap { p in
                     guard let ws = p.weeklyScores.first(where: { $0.week == week }) else { return nil }
                     let points: Double
