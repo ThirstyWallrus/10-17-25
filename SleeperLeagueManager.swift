@@ -626,9 +626,10 @@ class SleeperLeagueManager: ObservableObject {
 
             let allWeeks = matchupsByWeek.keys.sorted()
             let currentWeek = sleeperLeague.currentWeek
-            // --- PATCH: Use only completed weeks for season-long stats ---
-            let completedWeeks = allWeeks.filter { $0 < currentWeek }
-            var weeksToUse = completedWeeks
+            let completedWeeks = currentWeek > 1
+                ? allWeeks.filter { $0 < currentWeek }
+                : allWeeks
+            let weeksToUse = completedWeeks
             var weeksCounted = 0
             var actualPosTotals: [String: Double] = [:]
             var actualPosStartCounts: [String: Int] = [:]
@@ -784,8 +785,10 @@ class SleeperLeagueManager: ObservableObject {
             var positionPPW: [String: Double] = [:]
             var individualPPW: [String: Double] = [:]
             for (pos, total) in actualPosTotals {
-                let weeksPlayed = Double(actualPosWeeks[pos]?.count ?? 0)
-                positionPPW[pos] = weeksPlayed > 0 ? total / weeksPlayed : 0
+                // Defensive: Use weeksCounted as the denominator for ALL positions
+                // This counts weeks where this team had a valid lineup (actualStartersByWeek).
+                let denominator = Double(weeksCounted > 0 ? weeksCounted : 1)
+                positionPPW[pos] = total / denominator
                 let starts = Double(actualPosStartCounts[pos] ?? 1)
                 individualPPW[pos] = starts > 0 ? total / starts : 0
             }

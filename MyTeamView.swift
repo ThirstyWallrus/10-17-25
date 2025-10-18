@@ -823,6 +823,28 @@ struct MyTeamView: View {
         return Int(numStr)
     }
 
+    private func allowedPositions(for slot: String) -> Set<String> {
+        switch slot.uppercased() {
+        case "QB","RB","WR","TE","K","DL","LB","DB": return [slot.uppercased()]
+        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return ["RB","WR","TE"]
+        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return ["QB","RB","WR","TE"]
+        case "IDP": return ["DL","LB","DB"]
+        default:
+            if slot.uppercased().contains("IDP") { return ["DL","LB","DB"] }
+            return [slot.uppercased()]
+        }
+    }
+
+    private func isIDPFlex(_ slot: String) -> Bool {
+        let s = slot.uppercased()
+        return s.contains("IDP") && s != "DL" && s != "LB" && s != "DB"
+    }
+
+    private func isEligible(_ c: (id: String, pos: String, altPos: [String], score: Double), allowed: Set<String>) -> Bool {
+        if allowed.contains(c.pos) { return true }
+        return !allowed.intersection(Set(c.altPos)).isEmpty
+    }
+    
     private func computeWeeklyLineupPoints(team: TeamStanding, week: Int) -> (Double, Double, Double, Double, Double, Double) {
         // actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef
 
@@ -851,57 +873,100 @@ struct MyTeamView: View {
             }
         }
 
-        // Compute max points
+        // --- UPDATED: Use only the weekly player pool for optimal lineup calculations ---
+        // Try to use matchup weekly roster for this team/week
+        if
+            let league = league,
+            let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+            let entries = season.matchupsByWeek?[week],
+            let myEntry = entries.first(where: { $0.roster_id == Int(team.id) }),
+            let weeklyPlayerIds = myEntry.players
+        {
+            // Map to Player objects with correct weekly score, even if not on final roster
+            let candidates: [(id: String, pos: String, altPos: [String], score: Double)] = weeklyPlayerIds.compactMap { pid in
+                // Must find the player (dropped/traded players may still be in matchup player list but not in team.roster)
+                let player = team.roster.first(where: { $0.id == pid })
+                let pos = player?.position ?? ""
+                let alt = player?.altPositions ?? []
+                let score = player?.weeklyScores.first(where: { $0.week == week })?.points
+                if score == nil { return nil }
+                return (id: pid, pos: pos, altPos: alt, score: score!)
+            }
+
+            let startingSlots = league.startingLineup.filter { !["BN", "IR", "TAXI"].contains($0) }
+            let fixedCounts = fixedSlotCounts()
+            let slots = startingSlots
+
+            // Build strict and flex slot lists (for optimal assignment order)
+            var strictSlots: [String] = []
+            var flexSlots: [String] = []
+            for slot in slots {
+                let allowed = allowedPositions(for: slot)
+                if allowed.count == 1 &&
+                    !isIDPFlex(slot) &&
+                    !offensiveFlexSlots.contains(slot.uppercased()) {
+                    strictSlots.append(slot)
+                } else {
+                    flexSlots.append(slot)
+                }
+            }
+            let optimalOrder = strictSlots + flexSlots
+
+            var used = Set<String>()
+            var maxTotal = 0.0
+            var maxOff = 0.0
+            var maxDef = 0.0
+            for slot in optimalOrder {
+                let allowed = allowedPositions(for: slot)
+                let pick = candidates
+                    .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
+                    .max { $0.score < $1.score }
+                guard let best = pick else { continue }
+                used.insert(best.id)
+                maxTotal += best.score
+                if offensivePositions.contains(best.pos) { maxOff += best.score }
+                else if defensivePositions.contains(best.pos) { maxDef += best.score }
+            }
+            return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
+        }
+
+        // -------- Fallback: Use previous method (full roster), only if matchup data is missing --------
         let startingSlots = league?.startingLineup ?? []
         let fixedCounts = fixedSlotCounts()
-
-        // Offensive computation
         let offPositions: Set<String> = offensivePositions
         var offPlayerList = team.roster.filter { offPositions.contains($0.position) }.map {
             (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
         }
         var maxOff = 0.0
 
-        // Allocate fixed offensive slots
         for pos in Array(offPositions) {
             if let count = fixedCounts[pos] {
                 var candidates = offPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
                 let top = Array(candidates.prefix(count))
                 maxOff += top.reduce(0.0) { $0 + $1.score }
-                // Remove used players
                 offPlayerList.removeAll { used in top.contains { $0.id == used.id } }
             }
         }
-
-        // Allocate flex slots (assuming standard FLEX for RB/WR/TE, count all non-fixed slots as flex)
         let flexAllowed: Set<String> = ["RB", "WR", "TE"]
         let flexCount = startingSlots.filter { offensiveFlexSlots.contains($0) }.count
         var flexCandidates = offPlayerList.filter { flexAllowed.contains($0.pos) }.sorted { $0.score > $1.score }
         let topFlex = Array(flexCandidates.prefix(flexCount))
         maxOff += topFlex.reduce(0.0) { $0 + $1.score }
 
-        // Defensive computation
         let defPositions: Set<String> = defensivePositions
         var defPlayerList = team.roster.filter { defPositions.contains($0.position) }.map {
             (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
         }
         var maxDef = 0.0
-
-        // Allocate fixed defensive slots
         for pos in Array(defPositions) {
             if let count = fixedCounts[pos] {
                 var candidates = defPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
                 let top = Array(candidates.prefix(count))
                 maxDef += top.reduce(0.0) { $0 + $1.score }
-                // Remove used players
                 defPlayerList.removeAll { used in top.contains { $0.id == used.id } }
             }
         }
-
-        // Assume no defensive flex for simplicity
-
         let maxTotal = maxOff + maxDef
-
         return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
     }
 
