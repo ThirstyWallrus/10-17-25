@@ -655,27 +655,27 @@ class SleeperLeagueManager: ObservableObject {
                     }()
 
                     for idx in 0..<slots.count {
-                        let slotName = slots[idx]
                         let pid = paddedStarters[idx]
+                        guard pid != "0" else { continue }
+                        // Defensive: always use the starter's true position, not the slot's intended position
+                        var player: Player? = players.first(where: { $0.id == pid })
+                        if player == nil, let raw = allPlayers[pid] {
+                            player = Player(id: raw.player_id, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                        }
+                        guard let player = player else { continue }
+                        let points = playersPoints[pid] ?? 0.0
+                        let truePos = player.position.uppercased()
+                        actualPosStartCounts[truePos, default: 0] += 1
+                        actualPosTotals[truePos, default: 0] += points
+                        if points != 0.0 { weekHadValidScore = true }
+                        thisWeekActual += points
 
-                        let player = players.first(where: { $0.id == pid })
-                            ?? {
-                                if let raw = allPlayers[pid] {
-                                    return Player(
-                                        id: raw.player_id,
-                                        position: raw.position ?? "UNK",
-                                        altPositions: raw.fantasy_positions,
-                                        weeklyScores: []
-                                    )
-                                }
-                                return nil
-                            }()
-
+                        // Also increment old slot-based counts for other metrics
+                        let slotName = slots[idx]
                         let upperSlot = slotName.uppercased()
                         let isStrict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"].contains(upperSlot)
-
                         let creditedPosition: String
-                        if let player = player {
+                        if let _ = player {
                             creditedPosition = mappedPositionForStarter(
                                 slotName: slotName,
                                 playerPositions: [player.position] + (player.altPositions ?? []),
@@ -688,19 +688,8 @@ class SleeperLeagueManager: ObservableObject {
                                 continue
                             }
                         }
-
                         actualStarterPosTotals[creditedPosition, default: 0] += 1
-
-                        let pts: Double = playersPoints[pid] ?? 0.0
-                        if pts != 0.0 { weekHadValidScore = true }
-                        actualTotal += pts
-                        thisWeekActual += pts
-                        if offensivePositions.contains(creditedPosition) { actualOff += pts }
-                        else if defensivePositions.contains(creditedPosition) { actualDef += pts }
-
-                        actualPosTotals[creditedPosition, default: 0] += pts
-                        actualPosStartCounts[creditedPosition, default: 0] += 1
-                        actualPosWeeks[creditedPosition, default: Set<Int>()].insert(week)
+                        actualPosWeeks[truePos, default: Set<Int>()].insert(week)
                     }
                 }
 
@@ -778,19 +767,17 @@ class SleeperLeagueManager: ObservableObject {
             }
 
             let managementPercent = maxTotal > 0 ? (actualTotal / maxTotal) * 100 : 0
-            let offensiveMgmt = maxOff > 0 ? (actualOff / maxOff) * 100 : 0
-            let defensiveMgmt = maxDef > 0 ? (actualDef / maxDef) * 100 : 0
+            let offensiveMgmt = maxOff > 0 ? (actualOff / maxOff * 100) : 0
+            let defensiveMgmt = maxDef > 0 ? (actualDef / maxDef * 100) : 0
             let teamPPW = weeksCounted > 0 ? actualTotal / Double(weeksCounted) : 0
 
+            // --- PATCHED SECTION: Use true position counts for individualPPW ---
             var positionPPW: [String: Double] = [:]
             var individualPPW: [String: Double] = [:]
             for (pos, total) in actualPosTotals {
-                // Defensive: Use weeksCounted as the denominator for ALL positions
-                // This counts weeks where this team had a valid lineup (actualStartersByWeek).
-                let denominator = Double(weeksCounted > 0 ? weeksCounted : 1)
-                positionPPW[pos] = total / denominator
-                let starts = Double(actualPosStartCounts[pos] ?? 1)
+                let starts = Double(actualPosStartCounts[pos] ?? 0)
                 individualPPW[pos] = starts > 0 ? total / starts : 0
+                positionPPW[pos] = weeksCounted > 0 ? total / Double(weeksCounted) : 0
             }
 
             var strengths: [String] = []
@@ -1150,3 +1137,4 @@ extension SleeperLeagueManager {
         return result.sorted { $0.matchupId < $1.matchupId }
     }
 }
+
