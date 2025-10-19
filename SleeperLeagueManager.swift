@@ -117,37 +117,24 @@ private struct LeagueIndexEntry: Codable, Equatable {
 @MainActor
 class SleeperLeagueManager: ObservableObject {
 
-    // Published
     @Published var leagues: [LeagueData] = []
     @Published var playoffStartWeek: Int = 14
     @Published var leaguePlayoffStartWeeks: [String: Int] = [:]
     @Published var isRefreshing: Bool = false
 
-    // User Context
     private var activeUsername: String = "global"
-
-    // Legacy single-file (for migration)
     private let legacySingleFilePrefix = "leagues_"
     private let legacyFilename = "leagues.json"
     private let oldUDKey: String? = nil
-
-    // New disk layout
     private let rootFolderName = "SleeperLeagues"
     private let indexFileName = "index.json"
-
-    // In-memory index cache
     private var indexEntries: [LeagueIndexEntry] = []
-
-    // Player caches
-    private var playerCache: [String: RawSleeperPlayer]? = nil
-   var allPlayers: [String: RawSleeperPlayer] = [:]
-
-    // Heavy resource caches
+    var playerCache: [String: RawSleeperPlayer]? = nil
+    var allPlayers: [String: RawSleeperPlayer] = [:]
     private var transactionsCache: [String: [SleeperTransaction]] = [:]
     private var usersCache: [String: [SleeperUser]] = [:]
     private var rostersCache: [String: [SleeperRoster]] = [:]
 
-    // Position sets
     private let offensivePositions: Set<String> = ["QB","RB","WR","TE","K"]
     private let defensivePositions: Set<String> = ["DL","LB","DB"]
     private let offensiveFlexSlots: Set<String> = [
@@ -155,21 +142,16 @@ class SleeperLeagueManager: ObservableObject {
         "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX"
     ]
 
-    // Refresh throttle record
     private static var _lastRefresh: [String: Date] = [:]
     private var refreshThrottleInterval: TimeInterval { 10 * 60 } // 10 minutes
 
-    // Roster
     var weekRosterMatchupMap: [Int: [Int: Int]] = [:]
 
-    // MARK: Init
     init(autoLoad: Bool = false) {
         if autoLoad {
             loadLeaguesWithMigrationIfNeeded(for: activeUsername)
         }
     }
-
-    // MARK: - Directory Helpers
 
     private func userRootDir(_ user: String) -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -202,8 +184,6 @@ class SleeperLeagueManager: ObservableObject {
         userRootDir(activeUsername).appendingPathComponent(indexFileName)
     }
 
-    // MARK: - User Context
-
     func setActiveUser(username: String) {
         saveLeagues()
         activeUsername = username.isEmpty ? "global" : username
@@ -222,8 +202,6 @@ class SleeperLeagueManager: ObservableObject {
         loadIndex()
         loadAllLeagueFiles()
     }
-
-    // MARK: - Legacy Migration
 
     private func migrateLegacySingleFileIfNeeded(for user: String) {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -264,8 +242,6 @@ class SleeperLeagueManager: ObservableObject {
         ud.removeObject(forKey: key)
         saveIndex()
     }
-
-    // MARK: - Index Handling
 
     private func loadIndex() {
         let url = indexFileURL()
@@ -309,8 +285,6 @@ class SleeperLeagueManager: ObservableObject {
         indexEntries = newEntries
     }
 
-    // MARK: - League File Operations
-
     private func persistLeagueFile(_ league: LeagueData) {
         ensureUserDir()
         if let data = try? JSONEncoder().encode(league) {
@@ -334,15 +308,14 @@ class SleeperLeagueManager: ObservableObject {
         leagues.forEach { DatabaseManager.shared.saveLeague($0) }
     }
 
-    // MARK: - PATCH: Helper to get valid weeks for season stat aggregation
+    // PATCH: Helper to get valid weeks for season stat aggregation
 
-    /// Returns only completed weeks (i.e., weeks < currentWeek) for a given season.
     private func validWeeksForSeason(_ season: SeasonData, currentWeek: Int) -> [Int] {
         let allWeeks = season.matchupsByWeek?.keys.sorted() ?? []
         return allWeeks.filter { $0 < currentWeek }
     }
 
-    // MARK: - Public Import
+    // Public Import
 
     func fetchAndImportSingleLeague(leagueId: String, username: String) async throws {
         clearCaches()
@@ -365,8 +338,6 @@ class SleeperLeagueManager: ObservableObject {
             DatabaseManager.shared.saveLeague(leagueData)
         }
     }
-
-    // MARK: - API Calls
 
     private func fetchLeague(leagueId: String) async throws -> SleeperLeague {
         let url = URL(string: "https://api.sleeper.app/v1/league/\(leagueId)")!
@@ -456,11 +427,368 @@ class SleeperLeagueManager: ObservableObject {
         return 14
     }
 
-    // MARK: - Configuration
-
     func setPlayoffStartWeek(_ week: Int) { playoffStartWeek = max(13, min(18, week)) }
 
-    // MARK: - Slot / Position Helpers
+    // --- PATCHED SECTION: Robust position assignment for per-season PPW/individualPPW ---
+    private func buildTeams(
+        leagueId: String,
+        rosters: [SleeperRoster],
+        users: [SleeperUser],
+        parentLeague: LeagueData?,
+        lineupPositions: [String],
+        transactions: [SleeperTransaction],
+        playoffStartWeek: Int,
+        matchupsByWeek: [Int: [MatchupEntry]],
+        sleeperLeague: SleeperLeague
+    ) async throws -> [TeamStanding] {
+
+        let userDisplay: [String: String] = users.reduce(into: [:]) { dict, u in
+            let disp = (u.display_name ?? u.username ?? "").trimmingCharacters(in: .whitespaces)
+            dict[u.user_id] = disp.isEmpty ? "Owner \(u.user_id)" : disp
+        }
+
+        let nonStartingTokens: Set<String> = ["BN","BENCH","TAXI","IR","RESERVE","RESERVED","PUP","OUT"]
+        let startingPositions = lineupPositions.filter { !nonStartingTokens.contains($0.uppercased()) }
+        let orderedSlots = startingPositions
+        let lineupConfig = Dictionary(grouping: startingPositions, by: { $0 }).mapValues { $0.count }
+
+        var results: [TeamStanding] = []
+
+        for roster in rosters {
+            let ownerId = roster.owner_id ?? ""
+            let teamName = userDisplay[ownerId] ?? "Owner \(ownerId)"
+
+            let rawPlayers = try await fetchPlayers(ids: roster.players ?? [])
+            let players: [Player] = rawPlayers.map {
+                Player(
+                    id: $0.player_id,
+                    position: $0.position ?? "UNK",
+                    altPositions: $0.fantasy_positions,
+                    weeklyScores: weeklyScores(
+                        playerId: $0.player_id,
+                        rosterId: roster.roster_id,
+                        matchups: matchupsByWeek
+                    )
+                )
+            }
+
+            let settings = roster.settings ?? [:]
+            let wins = (settings["wins"]?.value as? Int) ?? 0
+            let losses = (settings["losses"]?.value as? Int) ?? 0
+            let ties = (settings["ties"]?.value as? Int) ?? 0
+            let standing = (settings["rank"]?.value as? Int) ?? 0
+
+            var actualTotal = 0.0, actualOff = 0.0, actualDef = 0.0
+            var maxTotal = 0.0, maxOff = 0.0, maxDef = 0.0
+
+            var posTotals: [String: Double] = [:]
+            var posStartCounts: [String: Int] = [:]
+
+            var weeklyActualLineupPoints: [Int: Double] = [:]
+            var actualStarterPosTotals: [String: Int] = [:]
+            var actualStarterWeeks = 0
+
+            var actualStartersByWeek: [Int: [String]] = [:]
+
+            let allWeeks = matchupsByWeek.keys.sorted()
+            let currentWeek = sleeperLeague.currentWeek
+            let completedWeeks = currentWeek > 1
+                ? allWeeks.filter { $0 < currentWeek }
+                : allWeeks
+            let weeksToUse = completedWeeks
+            var weeksCounted = 0
+            var actualPosTotals: [String: Double] = [:]
+            var actualPosStartCounts: [String: Int] = [:]
+            var actualPosWeeks: [String: Set<Int>] = [:]
+
+            // --- MAIN PATCHED SECTION: Use robust credited position for per-week actual lineup ---
+            for week in weeksToUse {
+                guard let allEntries = matchupsByWeek[week],
+                      let myEntry = allEntries.first(where: { $0.roster_id == roster.roster_id })
+                else { continue }
+
+                var weekHadValidScore = false
+                var thisWeekActual = 0.0
+
+                if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
+                    let slots = orderedSlots
+                    let paddedStarters: [String] = {
+                        if starters.count < slots.count {
+                            return starters + Array(repeating: "0", count: slots.count - starters.count)
+                        } else if starters.count > slots.count {
+                            return Array(starters.prefix(slots.count))
+                        }
+                        return starters
+                    }()
+
+                    var startersForThisWeek: [String] = []
+                    for idx in 0..<slots.count {
+                        let pid = paddedStarters[idx]
+                        guard pid != "0" else { continue }
+                        // --- PATCH: Robust position lookup for every starter ---
+                        let creditedPosition: String = {
+                            if let rawPlayer = allPlayers[pid], let pos = rawPlayer.position {
+                                return mappedPositionForStarter(
+                                    slotName: slots[idx],
+                                    playerPositions: [pos] + (rawPlayer.fantasy_positions ?? []),
+                                    lineupConfig: lineupConfig
+                                )
+                            }
+                            if let teamPlayer = players.first(where: { $0.id == pid }) {
+                                return mappedPositionForStarter(
+                                    slotName: slots[idx],
+                                    playerPositions: [teamPlayer.position] + (teamPlayer.altPositions ?? []),
+                                    lineupConfig: lineupConfig
+                                )
+                            }
+                            // fallback: use slot itself
+                            return slots[idx].uppercased()
+                        }()
+                        let points = playersPoints[pid] ?? 0.0
+                        actualPosStartCounts[creditedPosition, default: 0] += 1
+                        actualPosTotals[creditedPosition, default: 0] += points
+                        if points != 0.0 { weekHadValidScore = true }
+                        thisWeekActual += points
+                        startersForThisWeek.append(pid)
+                        actualStarterPosTotals[creditedPosition, default: 0] += 1
+                        actualPosWeeks[creditedPosition, default: Set<Int>()].insert(week)
+                    }
+                    actualStartersByWeek[week] = startersForThisWeek
+                }
+
+                if weekHadValidScore {
+                    weeksCounted += 1
+                    actualStarterWeeks += 1
+                    if thisWeekActual > 0 {
+                        weeklyActualLineupPoints[week] = thisWeekActual
+                    }
+                    actualTotal += thisWeekActual
+                    // Split offense/defense for this week, using position sets
+                    var weekOff = 0.0, weekDef = 0.0
+                    if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
+                        for pid in starters {
+                            let pos = allPlayers[pid]?.position
+                                ?? players.first(where: { $0.id == pid })?.position
+                                ?? ""
+                            let points = playersPoints[pid] ?? 0.0
+                            if offensivePositions.contains(pos) { weekOff += points }
+                            else if defensivePositions.contains(pos) { weekDef += points }
+                        }
+                    }
+                    actualOff += weekOff
+                    actualDef += weekDef
+                }
+
+                // --- OPTIMAL LINEUP: Use the weekly player pool from the matchup entry ---
+                let candidates: [Candidate] = {
+                    guard let weeklyPlayerIds = myEntry.players else { return [] }
+                    return weeklyPlayerIds.compactMap { pid in
+                        let raw = allPlayers[pid]
+                        let basePos = raw?.position ?? players.first(where: { $0.id == pid })?.position ?? "UNK"
+                        let fantasy = raw?.fantasy_positions ?? [basePos]
+                        let points = myEntry.players_points?[pid] ?? 0.0
+                        return Candidate(id: pid, basePos: basePos, fantasy: fantasy, points: points)
+                    }
+                }()
+
+                var strictSlots: [String] = []
+                var flexSlots: [String] = []
+                for slot in orderedSlots {
+                    let allowed = allowedPositions(for: slot)
+                    if allowed.count == 1 &&
+                        !isIDPFlex(slot) &&
+                        !offensiveFlexSlots.contains(slot.uppercased()) {
+                        strictSlots.append(slot)
+                    } else {
+                        flexSlots.append(slot)
+                    }
+                }
+                let optimalOrder = strictSlots + flexSlots
+
+                var used = Set<String>()
+                var weekMax = 0.0, weekOff = 0.0, weekDef = 0.0
+
+                for slot in optimalOrder {
+                    let allowed = allowedPositions(for: slot)
+                    let pick = candidates
+                        .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
+                        .max(by: { $0.points < $1.points })
+
+                    guard let best = pick else { continue }
+                    used.insert(best.id)
+                    weekMax += best.points
+                    let counted = countedPosition(for: slot,
+                                                  fantasy: best.fantasy,
+                                                  base: best.basePos)
+                    if offensivePositions.contains(counted) { weekOff += best.points }
+                    else if defensivePositions.contains(counted) { weekDef += best.points }
+                    posTotals[counted, default: 0] += best.points
+                    posStartCounts[counted, default: 0] += 1
+                }
+
+                maxTotal += weekMax
+                maxOff += weekOff
+                maxDef += weekDef
+            }
+
+            let managementPercent = maxTotal > 0 ? (actualTotal / maxTotal) * 100 : 0
+            let offensiveMgmt = maxOff > 0 ? (actualOff / maxOff * 100) : 0
+            let defensiveMgmt = maxDef > 0 ? (actualDef / maxDef * 100) : 0
+            let teamPPW = weeksCounted > 0 ? actualTotal / Double(weeksCounted) : 0
+
+            // --- PATCHED SECTION: Use robust credited position counts for individualPPW/positionPPW ---
+            var positionPPW: [String: Double] = [:]
+            var individualPPW: [String: Double] = [:]
+            for (pos, total) in actualPosTotals {
+                let starts = Double(actualPosStartCounts[pos] ?? 0)
+                individualPPW[pos] = starts > 0 ? total / starts : 0
+                positionPPW[pos] = weeksCounted > 0 ? total / Double(weeksCounted) : 0
+            }
+
+            var strengths: [String] = []
+            if managementPercent >= 85 { strengths.append("Efficient lineup mgmt") }
+            if actualOff > actualDef + 75 { strengths.append("Strong offense") }
+            if actualDef > actualOff + 75 { strengths.append("Strong defense") }
+
+            var weaknesses: [String] = []
+            if managementPercent < 65 { weaknesses.append("Lineup efficiency low") }
+
+            let playoffRec = playoffRecord(settings)
+            let champCount = championships(settings)
+            let pointsAgainst = ((settings["fpts_against"]?.value as? Double) ?? 0)
+                              + (((settings["fpts_against_decimal"]?.value as? Double) ?? 0)/100)
+
+            let txs = try await fetchTransactions(for: leagueId)
+            let waiverMoves = waiverMoveCount(rosterId: roster.roster_id, in: txs)
+            let faabSpentVal = faabSpent(rosterId: roster.roster_id, in: txs)
+            let trades = tradeCount(rosterId: roster.roster_id, in: txs)
+
+            let standingModel = TeamStanding(
+                id: String(roster.roster_id),
+                name: teamName,
+                positionStats: [],
+                ownerId: ownerId,
+                roster: players,
+                leagueStanding: standing,
+                pointsFor: actualTotal,
+                maxPointsFor: maxTotal,
+                managementPercent: managementPercent,
+                teamPointsPerWeek: teamPPW,
+                winLossRecord: "\(wins)-\(losses)-\(ties)",
+                bestGameDescription: nil,
+                biggestRival: nil,
+                strengths: strengths,
+                weaknesses: weaknesses,
+                playoffRecord: playoffRec,
+                championships: champCount,
+                winStreak: nil,
+                lossStreak: nil,
+                offensivePointsFor: actualOff,
+                maxOffensivePointsFor: maxOff,
+                offensiveManagementPercent: offensiveMgmt,
+                averageOffensivePPW: weeksCounted > 0 ? actualOff / Double(weeksCounted) : 0,
+                offensiveStrengths: strengths.filter { $0.lowercased().contains("offense") },
+                offensiveWeaknesses: weaknesses.filter { $0.lowercased().contains("offense") },
+                positionAverages: positionPPW,
+                individualPositionAverages: individualPPW,
+                defensivePointsFor: actualDef,
+                maxDefensivePointsFor: maxDef,
+                defensiveManagementPercent: defensiveMgmt,
+                averageDefensivePPW: weeksCounted > 0 ? actualDef / Double(weeksCounted) : 0,
+                defensiveStrengths: strengths.filter { $0.lowercased().contains("defense") },
+                defensiveWeaknesses: weaknesses.filter { $0.lowercased().contains("defense") },
+                pointsScoredAgainst: pointsAgainst,
+                league: parentLeague,
+                lineupConfig: lineupConfig,
+                weeklyActualLineupPoints: weeklyActualLineupPoints.isEmpty ? nil : weeklyActualLineupPoints,
+                actualStartersByWeek: actualStartersByWeek.isEmpty ? nil : actualStartersByWeek,
+                actualStarterPositionCounts: actualStarterPosTotals.isEmpty ? nil : actualStarterPosTotals,
+                actualStarterWeeks: actualStarterWeeks == 0 ? nil : actualStarterWeeks,
+                waiverMoves: waiverMoves,
+                faabSpent: faabSpentVal,
+                tradesCompleted: trades
+            )
+
+            results.append(standingModel)
+        }
+        return results
+    }
+
+    private func weeklyScores(
+        playerId: String,
+        rosterId: Int,
+        matchups: [Int: [MatchupEntry]]
+    ) -> [PlayerWeeklyScore] {
+        var scores: [PlayerWeeklyScore] = []
+        for (week, entries) in matchups {
+            guard let me = entries.first(where: { $0.roster_id == rosterId }),
+                  let pts = me.players_points?[playerId] else { continue }
+            scores.append(PlayerWeeklyScore(
+                week: week,
+                points: pts,
+                player_id: playerId,
+                points_half_ppr: pts,
+                matchup_id: me.matchup_id ?? 0,
+                points_ppr: pts,
+                points_standard: pts
+            ))
+        }
+        return scores.sorted { $0.week < $1.week }
+    }
+    
+    // MARK: - Transactions Helpers
+
+        private func waiverMoveCount(rosterId: Int, in tx: [SleeperTransaction]) -> Int {
+            tx.filter {
+                let t = ($0.type ?? "").lowercased()
+                return (t == "waiver" || t == "free_agent")
+                    && ($0.status ?? "").lowercased() == "complete"
+                    && ($0.roster_ids?.contains(rosterId) ?? false)
+            }.count
+        }
+
+        private func faabSpent(rosterId: Int, in tx: [SleeperTransaction]) -> Double {
+            tx.reduce(0.0) { acc, tr in
+                let t = (tr.type ?? "").lowercased()
+                guard t == "waiver",
+                      (tr.status ?? "").lowercased() == "complete",
+                      (tr.roster_ids?.contains(rosterId) ?? false) else { return acc }
+                return acc + Double(tr.waiver_bid ?? 0)
+            }
+        }
+
+        private func tradeCount(rosterId: Int, in tx: [SleeperTransaction]) -> Int {
+            tx.filter {
+                ($0.type ?? "").lowercased() == "trade"
+                && ($0.status ?? "").lowercased() == "complete"
+                && ($0.roster_ids?.contains(rosterId) ?? false)
+            }.count
+        }
+
+    private struct Candidate {
+        let id: String
+        let basePos: String
+        let fantasy: [String]
+        let points: Double
+    }
+
+    private func isEligible(_ c: Candidate, allowed: Set<String>) -> Bool {
+        if allowed.contains(c.basePos) { return true }
+        return !allowed.intersection(Set(c.fantasy)).isEmpty
+    }
+
+    private func playoffRecord(_ settings: [String: AnyCodable]) -> String? {
+        let w = (settings["playoff_wins"]?.value as? Int) ?? 0
+        let l = (settings["playoff_losses"]?.value as? Int) ?? 0
+        return (w + l) > 0 ? "\(w)-\(l)" : nil
+    }
+
+    private func championships(_ settings: [String: AnyCodable]) -> Int? {
+        if let champ = settings["champion"]?.value as? Bool, champ { return 1 }
+        if let c = settings["championships"]?.value as? Int { return c }
+        if let arr = settings["championship_seasons"]?.value as? [String], !arr.isEmpty { return arr.count }
+        return nil
+    }
 
     private func allowedPositions(for slot: String) -> Set<String> {
         let u = slot.uppercased()
@@ -495,7 +823,6 @@ class SleeperLeagueManager: ObservableObject {
         return base
     }
 
-    // MARK: - Position Grouping Helper
     private func mappedPositionForStarter(
         slotName: String,
         playerPositions: [String],
@@ -548,381 +875,6 @@ class SleeperLeagueManager: ObservableObject {
         return eligiblePositions.first ?? slot
     }
 
-    // MARK: - Candidate
-
-    private struct Candidate {
-        let id: String
-        let basePos: String
-        let fantasy: [String]
-        let points: Double
-    }
-
-    private func isEligible(_ c: Candidate, allowed: Set<String>) -> Bool {
-        if allowed.contains(c.basePos) { return true }
-        return !allowed.intersection(Set(c.fantasy)).isEmpty
-    }
-
-    // MARK: - Team Construction
-
-        private func buildTeams(
-            leagueId: String,
-            rosters: [SleeperRoster],
-            users: [SleeperUser],
-            parentLeague: LeagueData?,
-            lineupPositions: [String],
-            transactions: [SleeperTransaction],
-            playoffStartWeek: Int,
-            matchupsByWeek: [Int: [MatchupEntry]],
-            sleeperLeague: SleeperLeague
-        ) async throws -> [TeamStanding] {
-
-            let userDisplay: [String: String] = users.reduce(into: [:]) { dict, u in
-                let disp = (u.display_name ?? u.username ?? "").trimmingCharacters(in: .whitespaces)
-                dict[u.user_id] = disp.isEmpty ? "Owner \(u.user_id)" : disp
-            }
-
-            let nonStartingTokens: Set<String> = ["BN","BENCH","TAXI","IR","RESERVE","RESERVED","PUP","OUT"]
-            let startingPositions = lineupPositions.filter { !nonStartingTokens.contains($0.uppercased()) }
-            let orderedSlots = startingPositions
-            let lineupConfig = Dictionary(grouping: startingPositions, by: { $0 }).mapValues { $0.count }
-
-            var results: [TeamStanding] = []
-
-            for roster in rosters {
-                let ownerId = roster.owner_id ?? ""
-                let teamName = userDisplay[ownerId] ?? "Owner \(ownerId)"
-
-                let rawPlayers = try await fetchPlayers(ids: roster.players ?? [])
-                let players: [Player] = rawPlayers.map {
-                    Player(
-                        id: $0.player_id,
-                        position: $0.position ?? "UNK",
-                        altPositions: $0.fantasy_positions,
-                        weeklyScores: weeklyScores(
-                            playerId: $0.player_id,
-                            rosterId: roster.roster_id,
-                            matchups: matchupsByWeek
-                        )
-                    )
-                }
-
-                let settings = roster.settings ?? [:]
-                let wins = (settings["wins"]?.value as? Int) ?? 0
-                let losses = (settings["losses"]?.value as? Int) ?? 0
-                let ties = (settings["ties"]?.value as? Int) ?? 0
-                let standing = (settings["rank"]?.value as? Int) ?? 0
-
-                var actualTotal = 0.0, actualOff = 0.0, actualDef = 0.0
-                var maxTotal = 0.0, maxOff = 0.0, maxDef = 0.0
-
-                var posTotals: [String: Double] = [:]
-                var posStartCounts: [String: Int] = [:]
-
-                var weeklyActualLineupPoints: [Int: Double] = [:]
-                var actualStarterPosTotals: [String: Int] = [:]
-                var actualStarterWeeks = 0
-
-                var actualStartersByWeek: [Int: [String]] = [:]
-
-                let allWeeks = matchupsByWeek.keys.sorted()
-                let currentWeek = sleeperLeague.currentWeek
-                let completedWeeks = currentWeek > 1
-                    ? allWeeks.filter { $0 < currentWeek }
-                    : allWeeks
-                let weeksToUse = completedWeeks
-                var weeksCounted = 0
-                var actualPosTotals: [String: Double] = [:]
-                var actualPosStartCounts: [String: Int] = [:]
-                var actualPosWeeks: [String: Set<Int>] = [:]
-
-                // --- MAIN CONTINUITY PATCH: Use the weekly player pool for actual starter points ---
-                for week in weeksToUse {
-                    guard let allEntries = matchupsByWeek[week],
-                          let myEntry = allEntries.first(where: { $0.roster_id == roster.roster_id })
-                    else { continue }
-
-                    var weekHadValidScore = false
-                    var thisWeekActual = 0.0
-
-                    // For accurate actual lineup, use the starters list and players_points from the matchup entry,
-                    // and use the position from the allPlayers cache for each starter in that week.
-                    if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
-                        let slots = orderedSlots
-                        let paddedStarters: [String] = {
-                            if starters.count < slots.count {
-                                return starters + Array(repeating: "0", count: slots.count - starters.count)
-                            } else if starters.count > slots.count {
-                                return Array(starters.prefix(slots.count))
-                            }
-                            return starters
-                        }()
-
-                        var startersForThisWeek: [String] = []
-                        for idx in 0..<slots.count {
-                            let pid = paddedStarters[idx]
-                            guard pid != "0" else { continue }
-                            // Get position from allPlayers cache (historical for that week).
-                            let truePos: String = {
-                                if let raw = allPlayers[pid], let pos = raw.position { return pos.uppercased() }
-                                // fallback: try the current season roster
-                                return players.first(where: { $0.id == pid })?.position.uppercased() ?? "UNK"
-                            }()
-
-                            let points = playersPoints[pid] ?? 0.0
-                            actualPosStartCounts[truePos, default: 0] += 1
-                            actualPosTotals[truePos, default: 0] += points
-                            if points != 0.0 { weekHadValidScore = true }
-                            thisWeekActual += points
-                            startersForThisWeek.append(pid)
-
-                            // Slot-based credited position for per-slot metrics.
-                            let slotName = slots[idx]
-                            let upperSlot = slotName.uppercased()
-                            let isStrict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"].contains(upperSlot)
-                            let creditedPosition: String = {
-                                if let raw = allPlayers[pid] {
-                                    return mappedPositionForStarter(
-                                        slotName: slotName,
-                                        playerPositions: [raw.position ?? "UNK"] + (raw.fantasy_positions ?? []),
-                                        lineupConfig: lineupConfig
-                                    )
-                                }
-                                if isStrict { return upperSlot }
-                                return truePos
-                            }()
-                            actualStarterPosTotals[creditedPosition, default: 0] += 1
-                            actualPosWeeks[truePos, default: Set<Int>()].insert(week)
-                        }
-                        // Track actual starters by week for reference (needed for per-week lineup)
-                        actualStartersByWeek[week] = startersForThisWeek
-                    }
-
-                    if weekHadValidScore {
-                        weeksCounted += 1
-                        actualStarterWeeks += 1
-                        if thisWeekActual > 0 {
-                            weeklyActualLineupPoints[week] = thisWeekActual
-                        }
-                        actualTotal += thisWeekActual
-                        // Split offense/defense for this week, using position sets
-                        var weekOff = 0.0, weekDef = 0.0
-                        if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
-                            for pid in starters {
-                                guard let pts = playersPoints[pid] else { continue }
-                                let pos = allPlayers[pid]?.position ?? players.first(where: { $0.id == pid })?.position ?? ""
-                                if offensivePositions.contains(pos) { weekOff += pts }
-                                else if defensivePositions.contains(pos) { weekDef += pts }
-                            }
-                        }
-                        actualOff += weekOff
-                        actualDef += weekDef
-                    }
-
-                    // --- OPTIMAL LINEUP: Use the weekly player pool from the matchup entry ---
-                    let candidates: [Candidate] = {
-                        // Use all player IDs on this team's roster that week (myEntry.players)
-                        guard let weeklyPlayerIds = myEntry.players else { return [] }
-                        return weeklyPlayerIds.compactMap { pid in
-                            let raw = allPlayers[pid]
-                            let basePos = raw?.position ?? players.first(where: { $0.id == pid })?.position ?? "UNK"
-                            let fantasy = raw?.fantasy_positions ?? [basePos]
-                            let points = myEntry.players_points?[pid] ?? 0.0
-                            return Candidate(id: pid, basePos: basePos, fantasy: fantasy, points: points)
-                        }
-                    }()
-
-                    var strictSlots: [String] = []
-                    var flexSlots: [String] = []
-                    for slot in orderedSlots {
-                        let allowed = allowedPositions(for: slot)
-                        if allowed.count == 1 &&
-                            !isIDPFlex(slot) &&
-                            !offensiveFlexSlots.contains(slot.uppercased()) {
-                            strictSlots.append(slot)
-                        } else {
-                            flexSlots.append(slot)
-                        }
-                    }
-                    let optimalOrder = strictSlots + flexSlots
-
-                    var used = Set<String>()
-                    var weekMax = 0.0, weekOff = 0.0, weekDef = 0.0
-
-                    for slot in optimalOrder {
-                        let allowed = allowedPositions(for: slot)
-                        let pick = candidates
-                            .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
-                            .max(by: { $0.points < $1.points })
-
-                        guard let best = pick else { continue }
-                        used.insert(best.id)
-                        weekMax += best.points
-                        let counted = countedPosition(for: slot,
-                                                      fantasy: best.fantasy,
-                                                      base: best.basePos)
-                        if offensivePositions.contains(counted) { weekOff += best.points }
-                        else if defensivePositions.contains(counted) { weekDef += best.points }
-                        posTotals[counted, default: 0] += best.points
-                        posStartCounts[counted, default: 0] += 1
-                    }
-
-                    maxTotal += weekMax
-                    maxOff += weekOff
-                    maxDef += weekDef
-                }
-
-                // Defensive: If there were no valid weeks counted, preserve continuity by NOT setting actualTotal = maxTotal.
-                // This ensures we don't show 100% erroneously, but if no data is present, values remain 0.
-
-                let managementPercent = maxTotal > 0 ? (actualTotal / maxTotal) * 100 : 0
-                let offensiveMgmt = maxOff > 0 ? (actualOff / maxOff * 100) : 0
-                let defensiveMgmt = maxDef > 0 ? (actualDef / maxDef * 100) : 0
-                let teamPPW = weeksCounted > 0 ? actualTotal / Double(weeksCounted) : 0
-
-                // --- PATCHED SECTION: Use true position counts for individualPPW ---
-                var positionPPW: [String: Double] = [:]
-                var individualPPW: [String: Double] = [:]
-                for (pos, total) in actualPosTotals {
-                    let starts = Double(actualPosStartCounts[pos] ?? 0)
-                    individualPPW[pos] = starts > 0 ? total / starts : 0
-                    positionPPW[pos] = weeksCounted > 0 ? total / Double(weeksCounted) : 0
-                }
-
-                var strengths: [String] = []
-                if managementPercent >= 85 { strengths.append("Efficient lineup mgmt") }
-                if actualOff > actualDef + 75 { strengths.append("Strong offense") }
-                if actualDef > actualOff + 75 { strengths.append("Strong defense") }
-
-                var weaknesses: [String] = []
-                if managementPercent < 65 { weaknesses.append("Lineup efficiency low") }
-
-                let playoffRec = playoffRecord(settings)
-                let champCount = championships(settings)
-                let pointsAgainst = ((settings["fpts_against"]?.value as? Double) ?? 0)
-                                  + (((settings["fpts_against_decimal"]?.value as? Double) ?? 0)/100)
-
-                let txs = try await fetchTransactions(for: leagueId)
-                let waiverMoves = waiverMoveCount(rosterId: roster.roster_id, in: txs)
-                let faabSpentVal = faabSpent(rosterId: roster.roster_id, in: txs)
-                let trades = tradeCount(rosterId: roster.roster_id, in: txs)
-
-                let standingModel = TeamStanding(
-                    id: String(roster.roster_id),
-                    name: teamName,
-                    positionStats: [],
-                    ownerId: ownerId,
-                    roster: players,
-                    leagueStanding: standing,
-                    pointsFor: actualTotal,
-                    maxPointsFor: maxTotal,
-                    managementPercent: managementPercent,
-                    teamPointsPerWeek: teamPPW,
-                    winLossRecord: "\(wins)-\(losses)-\(ties)",
-                    bestGameDescription: nil,
-                    biggestRival: nil,
-                    strengths: strengths,
-                    weaknesses: weaknesses,
-                    playoffRecord: playoffRec,
-                    championships: champCount,
-                    winStreak: nil,
-                    lossStreak: nil,
-                    offensivePointsFor: actualOff,
-                    maxOffensivePointsFor: maxOff,
-                    offensiveManagementPercent: offensiveMgmt,
-                    averageOffensivePPW: weeksCounted > 0 ? actualOff / Double(weeksCounted) : 0,
-                    offensiveStrengths: strengths.filter { $0.lowercased().contains("offense") },
-                    offensiveWeaknesses: weaknesses.filter { $0.lowercased().contains("offense") },
-                    positionAverages: positionPPW,
-                    individualPositionAverages: individualPPW,
-                    defensivePointsFor: actualDef,
-                    maxDefensivePointsFor: maxDef,
-                    defensiveManagementPercent: defensiveMgmt,
-                    averageDefensivePPW: weeksCounted > 0 ? actualDef / Double(weeksCounted) : 0,
-                    defensiveStrengths: strengths.filter { $0.lowercased().contains("defense") },
-                    defensiveWeaknesses: weaknesses.filter { $0.lowercased().contains("defense") },
-                    pointsScoredAgainst: pointsAgainst,
-                    league: parentLeague,
-                    lineupConfig: lineupConfig,
-                    weeklyActualLineupPoints: weeklyActualLineupPoints.isEmpty ? nil : weeklyActualLineupPoints,
-                    actualStartersByWeek: actualStartersByWeek.isEmpty ? nil : actualStartersByWeek,
-                    actualStarterPositionCounts: actualStarterPosTotals.isEmpty ? nil : actualStarterPosTotals,
-                    actualStarterWeeks: actualStarterWeeks == 0 ? nil : actualStarterWeeks,
-                    waiverMoves: waiverMoves,
-                    faabSpent: faabSpentVal,
-                    tradesCompleted: trades
-                )
-
-                results.append(standingModel)
-            }
-            return results
-        }
-
-    private func weeklyScores(
-        playerId: String,
-        rosterId: Int,
-        matchups: [Int: [MatchupEntry]]
-    ) -> [PlayerWeeklyScore] {
-        var scores: [PlayerWeeklyScore] = []
-        for (week, entries) in matchups {
-            guard let me = entries.first(where: { $0.roster_id == rosterId }),
-                  let pts = me.players_points?[playerId] else { continue }
-            scores.append(PlayerWeeklyScore(
-                week: week,
-                points: pts,
-                player_id: playerId,
-                points_half_ppr: pts,
-                matchup_id: me.matchup_id ?? 0,
-                points_ppr: pts,
-                points_standard: pts
-            ))
-        }
-        return scores.sorted { $0.week < $1.week }
-    }
-
-    // MARK: - Transactions Helpers
-
-    private func waiverMoveCount(rosterId: Int, in tx: [SleeperTransaction]) -> Int {
-        tx.filter {
-            let t = ($0.type ?? "").lowercased()
-            return (t == "waiver" || t == "free_agent")
-                && ($0.status ?? "").lowercased() == "complete"
-                && ($0.roster_ids?.contains(rosterId) ?? false)
-        }.count
-    }
-
-    private func faabSpent(rosterId: Int, in tx: [SleeperTransaction]) -> Double {
-        tx.reduce(0.0) { acc, tr in
-            let t = (tr.type ?? "").lowercased()
-            guard t == "waiver",
-                  (tr.status ?? "").lowercased() == "complete",
-                  (tr.roster_ids?.contains(rosterId) ?? false) else { return acc }
-            return acc + Double(tr.waiver_bid ?? 0)
-        }
-    }
-
-    private func tradeCount(rosterId: Int, in tx: [SleeperTransaction]) -> Int {
-        tx.filter {
-            ($0.type ?? "").lowercased() == "trade"
-            && ($0.status ?? "").lowercased() == "complete"
-            && ($0.roster_ids?.contains(rosterId) ?? false)
-        }.count
-    }
-
-    // MARK: - Misc Helpers
-
-    private func playoffRecord(_ settings: [String: AnyCodable]) -> String? {
-        let w = (settings["playoff_wins"]?.value as? Int) ?? 0
-        let l = (settings["playoff_losses"]?.value as? Int) ?? 0
-        return (w + l) > 0 ? "\(w)-\(l)" : nil
-    }
-
-    private func championships(_ settings: [String: AnyCodable]) -> Int? {
-        if let champ = settings["champion"]?.value as? Bool, champ { return 1 }
-        if let c = settings["championships"]?.value as? Int { return c }
-        if let arr = settings["championship_seasons"]?.value as? [String], !arr.isEmpty { return arr.count }
-        return nil
-    }
-
     private func baseLeagueName(_ name: String) -> String {
         let pattern = "[\\p{Emoji}\\p{Emoji_Presentation}\\p{Emoji_Modifier_Base}\\p{Emoji_Component}\\p{Symbol}\\p{Punctuation}]"
         let regex = try? NSRegularExpression(pattern: pattern)
@@ -930,8 +882,6 @@ class SleeperLeagueManager: ObservableObject {
         let stripped = regex?.stringByReplacingMatches(in: name, options: [], range: range, withTemplate: "") ?? name
         return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-
-    // MARK: - Multi-Season Assembly
 
     private func fetchAllSeasonsForLeague(league: SleeperLeague, userId: String, playoffStartWeek: Int) async throws -> LeagueData {
         let currentYear = Calendar.current.component(.year, from: Date())
@@ -977,8 +927,6 @@ class SleeperLeagueManager: ObservableObject {
         )
     }
 
-    // MARK: - Persistence (Public Compatible API)
-
     func saveLeagues() {
         for lg in leagues {
             persistLeagueFile(lg)
@@ -1013,10 +961,7 @@ extension SleeperLeagueManager {
     }
 }
 
-// MARK: - Latest Season Refresh
-
 extension SleeperLeagueManager {
-
     func refreshAllLeaguesIfNeeded(username: String?, force: Bool = false) async {
         guard !leagues.isEmpty else { return }
         if isRefreshing { return }
@@ -1141,7 +1086,6 @@ extension SleeperLeagueManager {
                 }
             }
         }
-        // Sort by week ascending for consistent order
         return result.sorted { $0.matchupId < $1.matchupId }
     }
 }

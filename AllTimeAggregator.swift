@@ -177,22 +177,38 @@ struct AllTimeAggregator {
                 for idx in 0..<slots.count {
                     let pid = paddedStarters[idx]
                     guard pid != "0" else { continue }
-                    guard let point = entry.players_points?[pid],
-                          let rawPlayer = playerCache[pid],
-                          let pos = rawPlayer.position else { continue }
-                    // Assign credited position by slot assignment logic
-                    let creditedPosition = countedPosition(
-                        for: slots[idx],
-                        candidatePositions: [pos] + (rawPlayer.fantasy_positions ?? []),
-                        base: pos
-                    )
-                    // Use for per-position and individual PPW
+                    // --- FIX: Robust position lookup for every starter ---
+                    let creditedPosition: String = {
+                        if let rawPlayer = playerCache[pid], let pos = rawPlayer.position {
+                            return countedPosition(
+                                for: slots[idx],
+                                candidatePositions: [pos] + (rawPlayer.fantasy_positions ?? []),
+                                base: pos
+                            )
+                        }
+                        // fallback: check in team's current roster
+                        if let teamPlayer = team.roster.first(where: { $0.id == pid }) {
+                            return countedPosition(
+                                for: slots[idx],
+                                candidatePositions: [teamPlayer.position] + (teamPlayer.altPositions ?? []),
+                                base: teamPlayer.position
+                            )
+                        }
+                        // fallback: use slot as credited position
+                        return slots[idx].uppercased()
+                    }()
+                    let point = entry.players_points?[pid] ?? 0.0
                     posTotals[creditedPosition, default: 0.0] += point
                     posStarts[creditedPosition, default: 0] += 1
-                    // For overall offense/defense, still use base pos
-                    if offensivePositions.contains(pos) {
+                    // For overall offense/defense, use base pos if available
+                    let basePos: String = {
+                        if let rawPlayer = playerCache[pid], let pos = rawPlayer.position { return pos }
+                        if let teamPlayer = team.roster.first(where: { $0.id == pid }) { return teamPlayer.position }
+                        return creditedPosition
+                    }()
+                    if offensivePositions.contains(basePos) {
                         weekOffPF += point
-                    } else if defensivePositions.contains(pos) {
+                    } else if defensivePositions.contains(basePos) {
                         weekDefPF += point
                     }
                     weekPF += point
@@ -280,8 +296,6 @@ struct AllTimeAggregator {
         )
     }
 
-    // --- Begin PATCH: Shared slot assignment logic for credited position ---
-
     /// Returns credited position for a starter: If strict slot, use slot. Otherwise, use first eligible position for flexes.
     private static func countedPosition(for slot: String, candidatePositions: [String], base: String) -> String {
         let s = slot.uppercased()
@@ -312,9 +326,6 @@ struct AllTimeAggregator {
     private static func expandSlots(lineupConfig: [String: Int]) -> [String] {
         lineupConfig.flatMap { Array(repeating: $0.key, count: $0.value) }
     }
-
-    // ... rest of your file unchanged ...
-    // (no other functional changes below this line)
 
     private static func maxPointsForWeek(team: TeamStanding, week: Int) -> (total: Double, off: Double, def: Double) {
         let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
