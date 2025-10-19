@@ -151,6 +151,7 @@ struct AllTimeAggregator {
                 filteredWeeks = allWeeks
             }
 
+            // ---- PATCH: Use historical weekly player pool not just static roster ----
             for week in filteredWeeks {
                 guard week < playoffStart else { continue }
                 guard let entries = matchupsByWeek[week],
@@ -163,10 +164,26 @@ struct AllTimeAggregator {
                 var weekPF = 0.0
                 var weekOffPF = 0.0
                 var weekDefPF = 0.0
+
+                // === PATCHED: For each starter, get player info from weekly pool or playerCache ===
                 for starterId in starters {
-                    guard let point = entry.players_points?[starterId],
-                          let rawPlayer = playerCache[starterId],
-                          let pos = rawPlayer.position else { continue }
+                    guard let point = entry.players_points?[starterId] else { continue }
+                    // Try to get position for this starterId
+                    let pos: String = {
+                        // 1. Look for this player in the weekly player pool
+                        if let weeklyPlayers = entry.players, let raw = weeklyPlayers.contains(starterId) ? playerCache[starterId] : nil, let p = raw.position {
+                            return p
+                        }
+                        // 2. Try from canonical player cache
+                        if let raw = playerCache[starterId], let p = raw.position {
+                            return p
+                        }
+                        // 3. Fallback to team.roster
+                        if let p = team.roster.first(where: { $0.id == starterId })?.position {
+                            return p
+                        }
+                        return "UNK"
+                    }()
                     weekPF += point
                     if offensivePositions.contains(pos) {
                         weekOffPF += point
@@ -182,18 +199,6 @@ struct AllTimeAggregator {
 
                 // Max PF, Max Off, Max Def from optimal lineup (using historical roster that week)
                 let maxes = computeMaxForEntry(entry: entry, lineupConfig: team.lineupConfig ?? [:], playerCache: playerCache)
-                let players = entry.players ?? []
-                let playersPoints = entry.players_points ?? [:]
-
-                // Build candidates from players in entry.players (i.e., historical roster for that week)
-                let candidates: [(id: String, basePos: String, fantasy: [String], points: Double)] = players.compactMap { id in
-                    guard let points = playersPoints[id],
-                          let raw = playerCache[id],
-                          let basePos = raw.position else { return nil }
-                    let fantasy = raw.fantasy_positions ?? [basePos]
-                    return (id: id, basePos: basePos, fantasy: fantasy, points: points)
-                }
-                
                 totalMaxPF += maxes.total
                 totalMaxOffPF += maxes.off
                 totalMaxDefPF += maxes.def
@@ -274,52 +279,90 @@ struct AllTimeAggregator {
     // ... rest of your file unchanged ...
 
     private static func maxPointsForWeek(team: TeamStanding, week: Int) -> (total: Double, off: Double, def: Double) {
-        let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
-            if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
-                dict[player.id] = score
+        // PATCH: Use the weekly player pool if available for this week
+        guard let league = team.league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let entries = season.matchupsByWeek?[week],
+              let entry = entries.first(where: { $0.roster_id == Int(team.id) })
+        else {
+            // fallback to static roster only if weekly pool is unavailable
+            let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
+                if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
+                    dict[player.id] = score
+                }
             }
+
+            let startingSlots = team.league?.startingLineup ?? []
+            let fixedCounts = fixedSlotCounts(startingSlots: startingSlots)
+
+            var offPlayerList = team.roster.filter { offensivePositions.contains($0.position) }.map {
+                (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
+            }
+            var maxOff = 0.0
+            for pos in Array(offensivePositions) {
+                if let count = fixedCounts[pos] {
+                    let candidates = offPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
+                    let top = Array(candidates.prefix(count))
+                    maxOff += top.reduce(0.0) { $0 + $1.score }
+                    offPlayerList.removeAll { used in top.contains { $0.id == used.id } }
+                }
+            }
+
+            let flexAllowed: Set<String> = ["RB", "WR", "TE"]
+            let flexCount = startingSlots.filter { offensiveFlexSlots.contains($0) }.count
+            let flexCandidates = offPlayerList.filter { flexAllowed.contains($0.pos) }.sorted { $0.score > $1.score }
+            let topFlex = Array(flexCandidates.prefix(flexCount))
+            maxOff += topFlex.reduce(0.0) { $0 + $1.score }
+
+            var defPlayerList = team.roster.filter { defensivePositions.contains($0.position) }.map {
+                (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
+            }
+            var maxDef = 0.0
+            for pos in Array(defensivePositions) {
+                if let count = fixedCounts[pos] {
+                    let candidates = defPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
+                    let top = Array(candidates.prefix(count))
+                    maxDef += top.reduce(0.0) { $0 + $1.score }
+                    defPlayerList.removeAll { used in top.contains { $0.id == used.id } }
+                }
+            }
+
+            let maxTotal = maxOff + maxDef
+            return (maxTotal, maxOff, maxDef)
         }
 
-        // Compute max: optimal lineup
+        // --- PATCHED: Use weekly player pool ---
+        let players = entry.players ?? []
+        let playersPoints = entry.players_points ?? [:]
+
+        let candidates: [(id: String, basePos: String, fantasy: [String], points: Double)] = players.compactMap { id in
+            guard let points = playersPoints[id],
+                  let raw = playerCache[id],
+                  let basePos = raw.position else { return nil }
+            let fantasy = raw.fantasy_positions ?? [basePos]
+            return (id: id, basePos: basePos, fantasy: fantasy, points: points)
+        }
+        
         let startingSlots = team.league?.startingLineup ?? []
         let fixedCounts = fixedSlotCounts(startingSlots: startingSlots)
 
-        // Offensive
-        var offPlayerList = team.roster.filter { offensivePositions.contains($0.position) }.map {
-            (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
-        }
+        var usedIDs = Set<String>()
+        var maxTotal = 0.0
         var maxOff = 0.0
-        for pos in Array(offensivePositions) {
-            if let count = fixedCounts[pos] {
-                let candidates = offPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
-                let top = Array(candidates.prefix(count))
-                maxOff += top.reduce(0.0) { $0 + $1.score }
-                offPlayerList.removeAll { used in top.contains { $0.id == used.id } }
-            }
-        }
-
-        // Allocate flex slots
-        let flexAllowed: Set<String> = ["RB", "WR", "TE"]
-        let flexCount = startingSlots.filter { offensiveFlexSlots.contains($0) }.count
-        let flexCandidates = offPlayerList.filter { flexAllowed.contains($0.pos) }.sorted { $0.score > $1.score }
-        let topFlex = Array(flexCandidates.prefix(flexCount))
-        maxOff += topFlex.reduce(0.0) { $0 + $1.score }
-
-        // Defensive
-        var defPlayerList = team.roster.filter { defensivePositions.contains($0.position) }.map {
-            (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
-        }
         var maxDef = 0.0
-        for pos in Array(defensivePositions) {
-            if let count = fixedCounts[pos] {
-                let candidates = defPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
-                let top = Array(candidates.prefix(count))
-                maxDef += top.reduce(0.0) { $0 + $1.score }
-                defPlayerList.removeAll { used in top.contains { $0.id == used.id } }
-            }
+
+        for slot in startingSlots {
+            let allowed = allowedPositions(for: slot)
+            let pick = candidates
+                .filter { !usedIDs.contains($0.id) && isEligible(c: $0, allowed: allowed) }
+                .max { $0.points < $1.points }
+            guard let cand = pick else { continue }
+            usedIDs.insert(cand.id)
+            maxTotal += cand.points
+            if offensivePositions.contains(cand.basePos) { maxOff += cand.points }
+            else if defensivePositions.contains(cand.basePos) { maxDef += cand.points }
         }
 
-        let maxTotal = maxOff + maxDef
         return (maxTotal, maxOff, maxDef)
     }
 
@@ -385,13 +428,31 @@ struct AllTimeAggregator {
     }
 
     private static func actualPointsForWeek(team: TeamStanding, week: Int, positions: Set<String>) -> Double {
-        guard let starters = team.actualStartersByWeek?[week] else { return 0.0 }
+        // PATCH: Use the weekly player pool, not just team.roster
+        guard let league = team.league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let entries = season.matchupsByWeek?[week],
+              let entry = entries.first(where: { $0.roster_id == Int(team.id) })
+        else { return 0.0 }
+        let starters = entry.starters ?? []
+        let playersPoints = entry.players_points ?? [:]
         var total = 0.0
-        for id in starters {
-            if let player = team.roster.first(where: { $0.id == id }),
-               positions.contains(player.position),
-               let score = player.weeklyScores.first(where: { $0.week == week })?.points {
-                total += score
+        for starterId in starters {
+            // Position from weekly player pool or playerCache
+            let pos: String = {
+                if let weeklyPlayers = entry.players, let raw = weeklyPlayers.contains(starterId) ? playerCache[starterId] : nil, let p = raw.position {
+                    return p
+                }
+                if let raw = playerCache[starterId], let p = raw.position {
+                    return p
+                }
+                if let p = team.roster.first(where: { $0.id == starterId })?.position {
+                    return p
+                }
+                return "UNK"
+            }()
+            if positions.contains(pos) {
+                total += playersPoints[starterId] ?? 0.0
             }
         }
         return total
@@ -447,10 +508,21 @@ struct AllTimeAggregator {
             var weekPF = 0.0
             var weekOffPF = 0.0
             var weekDefPF = 0.0
+            let playersPoints = myEntry.players_points ?? [:]
             for starterId in starters {
-                guard let point = myEntry.players_points?[starterId],
-                      let rawPlayer = playerCache[starterId],
-                      let pos = rawPlayer.position else { continue }
+                guard let point = playersPoints[starterId] else { continue }
+                let pos: String = {
+                    if let weeklyPlayers = myEntry.players, let raw = weeklyPlayers.contains(starterId) ? playerCache[starterId] : nil, let p = raw.position {
+                        return p
+                    }
+                    if let raw = playerCache[starterId], let p = raw.position {
+                        return p
+                    }
+                    if let p = ownerTeam.roster.first(where: { $0.id == starterId })?.position {
+                        return p
+                    }
+                    return "UNK"
+                }()
                 weekPF += point
                 if offensivePositions.contains(pos) {
                     weekOffPF += point

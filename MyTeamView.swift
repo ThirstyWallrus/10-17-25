@@ -4,6 +4,9 @@
 //  - Uses LeagueSeasonTeamPicker for consistent selection
 //  - All derived data now references appSelection.*
 //
+//  PATCH: All "actual" lineup, bench, and per-position/slot stats for a given week use the historical player pool from weekly matchup data,
+//         not just the final team.roster. For missing players, uses canonical player cache (allPlayers).
+//
 
 import SwiftUI
 
@@ -87,6 +90,13 @@ struct MyTeamView: View {
 
     private var availableWeeks: [String] {
         guard let team = selectedTeamSeason else { return ["SZN"] }
+        // Use all weeks in matchup data for this team, not just team.roster
+        if let season = league?.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+           let mByWeek = season.matchupsByWeek {
+            let weeks = mByWeek.keys.sorted()
+            if weeks.isEmpty { return ["SZN"] }
+            return weeks.map { "Wk \($0)" } + ["SZN"]
+        }
         let allWeeks = team.roster.flatMap { $0.weeklyScores }.map { $0.week }
         let uniqueWeeks = Set(allWeeks).sorted()
         if uniqueWeeks.isEmpty { return ["SZN"] }
@@ -455,9 +465,11 @@ struct MyTeamView: View {
                     .bold()
                     .frame(maxWidth: .infinity / 3, alignment: .trailing)
             }
-            if let week = getSelectedWeekNumber(), let t = selectedTeamSeason, let slots = league?.startingLineup {
+            if let week = getSelectedWeekNumber(), let t = selectedTeamSeason, let slots = league?.startingLineup, let season = league?.seasons.first(where: { $0.teams.contains(where: { $0.id == t.id }) }), let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(t.id) }) {
+                // PATCH: Use weekly player pool for assigned slots & bench
+                let allPlayers = leagueManager.playerCache ?? [:]
                 let startingSlots = slots.filter { !["BN", "IR", "TAXI"].contains($0) }
-                let assigned = assignPlayersToSlots(team: t, week: week, slots: startingSlots)
+                let assigned = assignPlayersToSlotsPatched(team: t, week: week, slots: startingSlots, myEntry: myEntry, playerCache: allPlayers)
                 ForEach(assigned) { item in
                     HStack {
                         Text(item.slot)
@@ -469,8 +481,8 @@ struct MyTeamView: View {
                     }
                     .font(.caption)
                 }
-                let starters = t.actualStartersByWeek?[week] ?? []
-                let bench = getBenchPlayers(team: t, week: week, starters: starters)
+                let starters = myEntry.starters ?? []
+                let bench = getBenchPlayersPatched(team: t, week: week, starters: starters, myEntry: myEntry, playerCache: allPlayers)
                 ForEach(bench) { player in
                     HStack {
                         Text("BN")
@@ -590,7 +602,7 @@ struct MyTeamView: View {
             }
             return (0,0,0)
         } else if let week = getSelectedWeekNumber(), let t = selectedTeamSeason {
-            let (_, _, offActual, offMax, defActual, defMax) = computeWeeklyLineupPoints(team: t, week: week)
+            let (_, _, offActual, offMax, defActual, defMax) = computeWeeklyLineupPointsPatched(team: t, week: week)
             let actual = offActual + defActual
             let maxPF = offMax + defMax
             let mgmt = maxPF > 0 ? (actual / maxPF * 100) : 0
@@ -629,19 +641,42 @@ struct MyTeamView: View {
         if abs(avg - Double(base)) < 0.05 { return .green }
         return .yellow
     }
+
     private func positionPoints(in team: TeamStanding, week: Int, pos: String) -> Double {
-        guard let starters = team.actualStartersByWeek?[week] else { return 0 }
-        let starterIds = Set(starters)
-        let posPoints = team.roster.filter { starterIds.contains($0.id) && $0.position == pos }.reduce(0.0) { sum, player in
-            let score = player.weeklyScores.first { $0.week == week }?.points ?? 0
-            return sum + score
+        // PATCH: Use weekly player pool for position points
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
+              let starters = myEntry.starters,
+              let playersPoints = myEntry.players_points
+        else { return 0 }
+        let allPlayers = leagueManager.playerCache ?? [:]
+        var total = 0.0
+        for pid in starters {
+            let player = team.roster.first(where: { $0.id == pid })
+                ?? allPlayers[pid].map { raw in
+                    Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                }
+            if player?.position == pos {
+                total += playersPoints[pid] ?? 0
+            }
         }
-        return posPoints
+        return total
     }
     private func numberOfStarters(in team: TeamStanding, week: Int, pos: String) -> Int {
-        guard let starters = team.actualStartersByWeek?[week] else { return 0 }
+        // PATCH: Use weekly player pool for starter count
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
+              let starters = myEntry.starters
+        else { return 0 }
+        let allPlayers = leagueManager.playerCache ?? [:]
         return starters.filter { playerId in
-            team.roster.first { $0.id == playerId }?.position == pos
+            let player = team.roster.first(where: { $0.id == playerId })
+                ?? allPlayers[playerId].map { raw in
+                    Player(id: playerId, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                }
+            return player?.position == pos
         }.count
     }
     private func positionPPW(_ pos: String) -> Double {
@@ -701,7 +736,7 @@ struct MyTeamView: View {
             }
             return "--"
         } else if let week = getSelectedWeekNumber(), let t = selectedTeamSeason {
-            let (pf, maxPF, offAct, offMax, defAct, defMax) = computeWeeklyLineupPoints(team: t, week: week)
+            let (pf, maxPF, offAct, offMax, defAct, defMax) = computeWeeklyLineupPointsPatched(team: t, week: week)
             let mgmt = maxPF > 0 ? (pf / maxPF * 100) : 0
             let offMgmt = offMax > 0 ? (offAct / offMax * 100) : 0
             let defMgmt = defMax > 0 ? (defAct / defMax * 100) : 0
@@ -754,7 +789,7 @@ struct MyTeamView: View {
             return average(seasonTeams.compactMap { $0.individualPositionAverages?[pos] })
         } else if let week = getSelectedWeekNumber() {
             let teamIndPPW = seasonTeams.map { team in
-                let posPoints = positionPoints(in: team, week: week, pos: pos)
+                let posPoints = positionPPW(pos)
                 let numStarters = numberOfStarters(in: team, week: week, pos: pos)
                 return numStarters > 0 ? posPoints / Double(numStarters) : 0
             }
@@ -844,153 +879,130 @@ struct MyTeamView: View {
         if allowed.contains(c.pos) { return true }
         return !allowed.intersection(Set(c.altPos)).isEmpty
     }
-    
-    private func computeWeeklyLineupPoints(team: TeamStanding, week: Int) -> (Double, Double, Double, Double, Double, Double) {
-        // actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef
 
-        var playerScores: [String: Double] = [:]
-        var playerPos: [String: String] = [:]
-        for player in team.roster {
-            if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
-                playerScores[player.id] = score
-                playerPos[player.id] = player.position
-            }
-        }
+    // MARK: PATCHED: Use weekly player pool, not just team.roster, for all per-week actual lineup and bench logic.
 
-        // Compute actual points (total, off, def) from starters
-        let starters = team.actualStartersByWeek?[week] ?? []
-        var actualTotal = 0.0
-        var actualOff = 0.0
-        var actualDef = 0.0
-        for id in starters {
-            if let score = playerScores[id], let pos = playerPos[id] {
-                actualTotal += score
-                if offensivePositions.contains(pos) {
-                    actualOff += score
-                } else if defensivePositions.contains(pos) {
-                    actualDef += score
-                }
-            }
-        }
-
-        // --- UPDATED: Use only the weekly player pool for optimal lineup calculations ---
-        // Try to use matchup weekly roster for this team/week
-        if
-            let league = league,
-            let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
-            let entries = season.matchupsByWeek?[week],
-            let myEntry = entries.first(where: { $0.roster_id == Int(team.id) }),
-            let weeklyPlayerIds = myEntry.players
-        {
-            // Map to Player objects with correct weekly score, even if not on final roster
-            let candidates: [(id: String, pos: String, altPos: [String], score: Double)] = weeklyPlayerIds.compactMap { pid in
-                // Must find the player (dropped/traded players may still be in matchup player list but not in team.roster)
-                let player = team.roster.first(where: { $0.id == pid })
-                let pos = player?.position ?? ""
-                let alt = player?.altPositions ?? []
-                let score = player?.weeklyScores.first(where: { $0.week == week })?.points
-                if score == nil { return nil }
-                return (id: pid, pos: pos, altPos: alt, score: score!)
-            }
-
-            let startingSlots = league.startingLineup.filter { !["BN", "IR", "TAXI"].contains($0) }
-            let fixedCounts = fixedSlotCounts()
-            let slots = startingSlots
-
-            // Build strict and flex slot lists (for optimal assignment order)
-            var strictSlots: [String] = []
-            var flexSlots: [String] = []
-            for slot in slots {
-                let allowed = allowedPositions(for: slot)
-                if allowed.count == 1 &&
-                    !isIDPFlex(slot) &&
-                    !offensiveFlexSlots.contains(slot.uppercased()) {
-                    strictSlots.append(slot)
-                } else {
-                    flexSlots.append(slot)
-                }
-            }
-            let optimalOrder = strictSlots + flexSlots
-
-            var used = Set<String>()
-            var maxTotal = 0.0
-            var maxOff = 0.0
-            var maxDef = 0.0
-            for slot in optimalOrder {
-                let allowed = allowedPositions(for: slot)
-                let pick = candidates
-                    .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
-                    .max { $0.score < $1.score }
-                guard let best = pick else { continue }
-                used.insert(best.id)
-                maxTotal += best.score
-                if offensivePositions.contains(best.pos) { maxOff += best.score }
-                else if defensivePositions.contains(best.pos) { maxDef += best.score }
-            }
-            return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
-        }
-
-        // -------- Fallback: Use previous method (full roster), only if matchup data is missing --------
-        let startingSlots = league?.startingLineup ?? []
-        let fixedCounts = fixedSlotCounts()
-        let offPositions: Set<String> = offensivePositions
-        var offPlayerList = team.roster.filter { offPositions.contains($0.position) }.map {
-            (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
-        }
-        var maxOff = 0.0
-
-        for pos in Array(offPositions) {
-            if let count = fixedCounts[pos] {
-                var candidates = offPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
-                let top = Array(candidates.prefix(count))
-                maxOff += top.reduce(0.0) { $0 + $1.score }
-                offPlayerList.removeAll { used in top.contains { $0.id == used.id } }
-            }
-        }
-        let flexAllowed: Set<String> = ["RB", "WR", "TE"]
-        let flexCount = startingSlots.filter { offensiveFlexSlots.contains($0) }.count
-        var flexCandidates = offPlayerList.filter { flexAllowed.contains($0.pos) }.sorted { $0.score > $1.score }
-        let topFlex = Array(flexCandidates.prefix(flexCount))
-        maxOff += topFlex.reduce(0.0) { $0 + $1.score }
-
-        let defPositions: Set<String> = defensivePositions
-        var defPlayerList = team.roster.filter { defPositions.contains($0.position) }.map {
-            (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
-        }
-        var maxDef = 0.0
-        for pos in Array(defPositions) {
-            if let count = fixedCounts[pos] {
-                var candidates = defPlayerList.filter { $0.pos == pos }.sorted { $0.score > $1.score }
-                let top = Array(candidates.prefix(count))
-                maxDef += top.reduce(0.0) { $0 + $1.score }
-                defPlayerList.removeAll { used in top.contains { $0.id == used.id } }
-            }
-        }
-        let maxTotal = maxOff + maxDef
-        return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
-    }
-
-    private func assignPlayersToSlots(team: TeamStanding, week: Int, slots: [String]) -> [AssignedSlot] {
-        guard let starters = team.actualStartersByWeek?[week], starters.count == slots.count else { return [] }
+    private func assignPlayersToSlotsPatched(team: TeamStanding, week: Int, slots: [String], myEntry: MatchupEntry, playerCache: [String: RawSleeperPlayer]) -> [AssignedSlot] {
+        // For a given week, assign each starter to their slot, pulling info from the weekly player pool and player cache as needed.
+        guard let starters = myEntry.starters, let playersPoints = myEntry.players_points, let playersPool = myEntry.players else { return [] }
         var results: [AssignedSlot] = []
-        for (index, slot) in slots.enumerated() {
-            let player_id = starters[index]
-            if let player = team.roster.first(where: { $0.id == player_id }),
-               let score = player.weeklyScores.first(where: { $0.week == week })?.points {
-                results.append(AssignedSlot(slot: slot, playerPos: player.position, score: score))
+        let playerDict: [String: Player] = {
+            var dict = [String: Player]()
+            // Build from weekly player pool, not just team.roster
+            for pid in playersPool {
+                if let player = team.roster.first(where: { $0.id == pid }) {
+                    dict[pid] = player
+                } else if let raw = playerCache[pid] {
+                    dict[pid] = Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                }
             }
+            return dict
+        }()
+        // Defensive: pad starters to slots count if needed
+        let paddedStarters: [String] = {
+            if starters.count < slots.count {
+                return starters + Array(repeating: "0", count: slots.count - starters.count)
+            } else if starters.count > slots.count {
+                return Array(starters.prefix(slots.count))
+            }
+            return starters
+        }()
+        for (index, slot) in slots.enumerated() {
+            let player_id = paddedStarters[index]
+            guard player_id != "0", let p = playerDict[player_id] else { continue }
+            let score = playersPoints[player_id] ?? 0
+            results.append(AssignedSlot(slot: slot, playerPos: p.position, score: score))
         }
         return results
     }
 
-    private func getBenchPlayers(team: TeamStanding, week: Int, starters: [String]) -> [BenchPlayer] {
+    private func getBenchPlayersPatched(team: TeamStanding, week: Int, starters: [String], myEntry: MatchupEntry, playerCache: [String: RawSleeperPlayer]) -> [BenchPlayer] {
+        guard let playersPoints = myEntry.players_points, let playersPool = myEntry.players else { return [] }
+        let starterSet = Set(starters)
         var res: [BenchPlayer] = []
-        for player in team.roster where !starters.contains(player.id) {
-            if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
-                res.append(BenchPlayer(id: player.id, pos: player.position, score: score))
+        for pid in playersPool where !starterSet.contains(pid) {
+            let p = team.roster.first(where: { $0.id == pid })
+                ?? playerCache[pid].map { raw in
+                    Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                }
+            if let p = p {
+                let score = playersPoints[pid] ?? 0
+                res.append(BenchPlayer(id: pid, pos: p.position, score: score))
             }
         }
         return res.sorted { $0.score > $1.score }
+    }
+
+    private func computeWeeklyLineupPointsPatched(team: TeamStanding, week: Int) -> (Double, Double, Double, Double, Double, Double) {
+        // actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
+              let playersPool = myEntry.players,
+              let playersPoints = myEntry.players_points
+        else {
+            return (0,0,0,0,0,0)
+        }
+        let playerCache = leagueManager.playerCache ?? [:]
+        let startingSlots = league.startingLineup.filter { !["BN", "IR", "TAXI"].contains($0) }
+        // --- ACTUAL ---
+        let starters = myEntry.starters ?? []
+        var actualTotal = 0.0
+        var actualOff = 0.0
+        var actualDef = 0.0
+        for pid in starters {
+            let p = team.roster.first(where: { $0.id == pid })
+                ?? playerCache[pid].map { raw in
+                    Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                }
+            let pos = p?.position ?? "UNK"
+            let score = playersPoints[pid] ?? 0
+            actualTotal += score
+            if offensivePositions.contains(pos) {
+                actualOff += score
+            } else if defensivePositions.contains(pos) {
+                actualDef += score
+            }
+        }
+        // --- MAX/OPTIMAL ---
+        let candidates: [(id: String, pos: String, altPos: [String], score: Double)] = playersPool.compactMap { pid in
+            let p = team.roster.first(where: { $0.id == pid })
+                ?? playerCache[pid].map { raw in
+                    Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                }
+            guard let p = p else { return nil }
+            return (id: pid, pos: p.position, altPos: p.altPositions ?? [], score: playersPoints[pid] ?? 0)
+        }
+        // Slot assignment logic: try to fill strict positions first, then flex
+        var strictSlots: [String] = []
+        var flexSlots: [String] = []
+        for slot in startingSlots {
+            let allowed = allowedPositions(for: slot)
+            if allowed.count == 1 &&
+                !isIDPFlex(slot) &&
+                !offensiveFlexSlots.contains(slot.uppercased()) {
+                strictSlots.append(slot)
+            } else {
+                flexSlots.append(slot)
+            }
+        }
+        let optimalOrder = strictSlots + flexSlots
+        var used = Set<String>()
+        var maxTotal = 0.0
+        var maxOff = 0.0
+        var maxDef = 0.0
+        for slot in optimalOrder {
+            let allowed = allowedPositions(for: slot)
+            let pick = candidates
+                .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
+                .max { $0.score < $1.score }
+            guard let best = pick else { continue }
+            used.insert(best.id)
+            maxTotal += best.score
+            if offensivePositions.contains(best.pos) { maxOff += best.score }
+            else if defensivePositions.contains(best.pos) { maxDef += best.score }
+        }
+        return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
     }
 
     private let offensivePositions: Set<String> = ["QB", "RB", "WR", "TE", "K"]

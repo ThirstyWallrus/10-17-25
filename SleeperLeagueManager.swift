@@ -140,7 +140,7 @@ class SleeperLeagueManager: ObservableObject {
 
     // Player caches
     private var playerCache: [String: RawSleeperPlayer]? = nil
-    private var allPlayers: [String: RawSleeperPlayer] = [:]
+   var allPlayers: [String: RawSleeperPlayer] = [:]
 
     // Heavy resource caches
     private var transactionsCache: [String: [SleeperTransaction]] = [:]

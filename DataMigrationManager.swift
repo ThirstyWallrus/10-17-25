@@ -47,9 +47,22 @@ final class DataMigrationManager: ObservableObject {
 
         var migratedLeagues: [LeagueData] = []
         for league in leagueManager.leagues {
+            // PATCH: build a playerCache for canonical lookup
+            var playerCache: [String: RawSleeperPlayer] = leagueManager.allPlayers
+            // Defensive: If empty, try to rebuild from all seasons
+            if playerCache.isEmpty {
+                for s in league.seasons {
+                    for t in s.teams {
+                        for p in t.roster {
+                            playerCache[p.id] = RawSleeperPlayer(player_id: p.id, full_name: nil, position: p.position, fantasy_positions: p.altPositions)
+                        }
+                    }
+                }
+            }
+
             var newSeasons: [SeasonData] = []
             for season in league.seasons {
-                let migratedTeams = season.teams.map { migrateTeam($0, season: season) }
+                let migratedTeams = season.teams.map { migrateTeam($0, season: season, playerCache: playerCache) }
                 newSeasons.append(SeasonData(id: season.id, season: season.season, teams: migratedTeams, playoffStartWeek: season.playoffStartWeek, playoffTeamsCount: season.playoffTeamsCount, matchups: season.matchups, matchupsByWeek: season.matchupsByWeek))
             }
             let latestTeams = newSeasons.last?.teams ?? league.teams
@@ -97,7 +110,8 @@ final class DataMigrationManager: ObservableObject {
     
     // MARK: Team Migration
 
-    private func migrateTeam(_ old: TeamStanding, season: SeasonData?) -> TeamStanding {
+    // PATCH: Accept playerCache for weekly starter lookup
+    private func migrateTeam(_ old: TeamStanding, season: SeasonData?, playerCache: [String: RawSleeperPlayer]) -> TeamStanding {
         // If already has fully populated offensive / defensive max + mgmt% and extended fields, skip
         if let offMax = old.maxOffensivePointsFor,
            let defMax = old.maxDefensivePointsFor,
@@ -159,7 +173,7 @@ final class DataMigrationManager: ObservableObject {
 
         let myRosterId = Int(old.id) ?? -1
         let playoffStart = season.playoffStartWeek ?? 14
-        let allWeeks = old.weeklyActualLineupPoints?.keys.sorted() ?? []
+        let allWeeks = season.matchupsByWeek?.keys.sorted() ?? []
         let regWeeks = allWeeks.filter { $0 < playoffStart }
 
         var actualTotal = 0.0
@@ -180,11 +194,13 @@ final class DataMigrationManager: ObservableObject {
         let lineupConfig = old.lineupConfig ?? inferredLineupConfig(from: old.roster)
         let slots = expandSlots(lineupConfig: lineupConfig)
         
-        let playerCache: [String: RawSleeperPlayer] = [:]
+        // PATCH: Use the weekly player pool and playerCache for all lookups
+        //         Instead of only old.roster
 
         var actualStartersByWeek: [Int: [String]] = [:]
         var actualStarterPositionCounts: [String: Int] = [:]
         var actualStarterWeeks: Int = 0
+        var weeklyActualLineupPoints: [Int: Double] = [:]
 
         for week in regWeeks {
             let weekEntries = season.matchupsByWeek?[week] ?? []
@@ -192,32 +208,21 @@ final class DataMigrationManager: ObservableObject {
 
             let myPoints = myEntry.points ?? 0.0
             actualTotal += myPoints
+            weeklyActualLineupPoints[week] = myPoints
 
-            // Offensive/Defensive Split using slots primarily
-            var off = 0.0
-            var defPF = 0.0  // Renamed to avoid conflict
-            guard let starters = myEntry.starters,
-                  let starterPoints = myEntry.players_points, // <-- FIX: use players_points
-                  starters.count == starterPoints.count else { continue }
-            if slots.count == starters.count {
-                for i in 0..<starters.count {
-                    let pid = starters[i]
-                    let pts = starterPoints[pid] ?? 0.0
-                    if isOffensiveSlot(slots[i]) {
-                        off += pts
-                    } else {
-                        defPF += pts
-                    }
-                }
-            } else {
-                // Fallback to position-based
-                for i in 0..<starters.count {
-                    let pid = starters[i]
-                    let pts = starterPoints[pid] ?? 0.0
-                    // FIX: We want a RawSleeperPlayer? here. Use playerCache[pid] if available, else map from old.roster
-                    let player: RawSleeperPlayer? = playerCache[pid] ?? {
+            // PATCH: Use only the weekly player pool, not just old.roster
+            var startersForThisWeek: [String] = []
+            var weekOff = 0.0
+            var weekDef = 0.0
+
+            // Use starter IDs and build Player from playerCache if not in roster
+            if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
+                startersForThisWeek = starters
+                for (idx, pid) in starters.enumerated() {
+                    // Find position for this starter
+                    let player: RawSleeperPlayer? = {
+                        // Prefer current roster if available
                         if let p = old.roster.first(where: { $0.id == pid }) {
-                            // Map Player to RawSleeperPlayer (approximate: position is present)
                             return RawSleeperPlayer(
                                 player_id: p.id,
                                 full_name: nil,
@@ -225,30 +230,40 @@ final class DataMigrationManager: ObservableObject {
                                 fantasy_positions: p.altPositions
                             )
                         }
-                        return nil
+                        // Fallback to player cache
+                        return playerCache[pid]
                     }()
-                    if let pos = player?.position?.uppercased() {
-                        if offensivePositions.contains(pos) {
-                            off += pts
-                        } else if defensivePositions.contains(pos) {
-                            defPF += pts
-                        }
-                        // Update position stats
-                        posPPW[pos, default: 0] += pts
-                        indivPPW[pos, default: 0] += pts
-                        posCounts[pos, default: 0] += 1
-                        indivCounts[pos, default: 0] += 1
+                    let pos = player?.position?.uppercased() ?? "UNK"
+                    let pts = playersPoints[pid] ?? 0.0
+                    if offensivePositions.contains(pos) {
+                        weekOff += pts
+                    } else if defensivePositions.contains(pos) {
+                        weekDef += pts
                     }
+                    // Position stats
+                    posPPW[pos, default: 0.0] += pts
+                    indivPPW[pos, default: 0.0] += pts
+                    posCounts[pos, default: 0] += 1
+                    indivCounts[pos, default: 0] += 1
                 }
             }
-            totalOffPF += off
-            totalDefPF += defPF
+            totalOffPF += weekOff
+            totalDefPF += weekDef
 
-            // Optimal Lineup
-            let candidates: [MigCandidate] = old.roster.compactMap { player in
-                guard let ws = player.weeklyScores.first(where: { $0.week == week }) else { return nil }
-                return MigCandidate(basePos: player.position, fantasy: player.altPositions ?? [], points: ws.points_half_ppr ?? ws.points)
-            }
+            // --- OPTIMAL LINEUP: Use player pool for this week ---
+            let candidates: [MigCandidate] = {
+                // Build candidates from all players in this week's player pool
+                let pool = myEntry.players ?? []
+                let playersPoints = myEntry.players_points ?? [:]
+                return pool.compactMap { pid in
+                    let raw = playerCache[pid]
+                    let basePos = raw?.position ?? old.roster.first(where: { $0.id == pid })?.position ?? "UNK"
+                    let fantasy = raw?.fantasy_positions ?? [basePos]
+                    let points = playersPoints[pid] ?? 0.0
+                    return MigCandidate(basePos: basePos, fantasy: fantasy, points: points)
+                }
+            }()
+
             var used = Set<MigCandidate>()
             var weekMax = 0.0
             var weekMaxOff = 0.0
@@ -272,14 +287,18 @@ final class DataMigrationManager: ObservableObject {
             maxOff += weekMaxOff
             maxDef += weekMaxDef
 
-            // Actual starters per position (usage)
+            // --- ACTUAL STARTERS PER POSITION (usage) ---
             if let startersList = myEntry.starters, !startersList.isEmpty {
                 tempStarters[week] = startersList
                 var assignment: [MigCandidate: String] = [:]
                 var availableSlots = slots
 
+                // Build candidate objects for all starters, using their position from playerCache
                 let sortedStarters = startersList.compactMap { pid in
-                    old.roster.first { $0.id == pid }.map { MigCandidate(basePos: $0.position, fantasy: $0.altPositions ?? [], points: 0) }
+                    let raw = playerCache[pid]
+                    let pos = raw?.position ?? old.roster.first(where: { $0.id == pid })?.position ?? "UNK"
+                    let alt = raw?.fantasy_positions ?? []
+                    return MigCandidate(basePos: pos, fantasy: [pos] + alt, points: myEntry.players_points?[pid] ?? 0)
                 }
 
                 for c in sortedStarters {
@@ -349,10 +368,10 @@ final class DataMigrationManager: ObservableObject {
             pointsScoredAgainst: old.pointsScoredAgainst,
             league: old.league,
             lineupConfig: lineupConfig,
-            weeklyActualLineupPoints: old.weeklyActualLineupPoints,
-            actualStartersByWeek: actualStartersByWeek,
-            actualStarterPositionCounts: actualStarterPositionCounts,
-            actualStarterWeeks: actualStarterWeeks,
+            weeklyActualLineupPoints: weeklyActualLineupPoints.isEmpty ? old.weeklyActualLineupPoints : weeklyActualLineupPoints,
+            actualStartersByWeek: actualStartersByWeek.isEmpty ? old.actualStartersByWeek : actualStartersByWeek,
+            actualStarterPositionCounts: actualStarterPositionCounts.isEmpty ? old.actualStarterPositionCounts : actualStarterPositionCounts,
+            actualStarterWeeks: actualStarterWeeks == 0 ? old.actualStarterWeeks : actualStarterWeeks,
             waiverMoves: old.waiverMoves ?? 0,
             faabSpent: old.faabSpent ?? 0,
             tradesCompleted: old.tradesCompleted ?? 0

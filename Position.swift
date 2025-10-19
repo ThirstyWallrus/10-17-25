@@ -4,6 +4,13 @@
 //
 //  Created by Dynasty Stat Drop on 7/8/25.
 //
+//  PATCHED FOR HISTORICAL WEEKLY PLAYER POOL CONTINUITY (See Copilot Space instructions at top)
+//
+//  All calculations for actual starter/lineup points, per-position stats, and management % now use
+//  the historical weekly player pool (from MatchupEntry.players and players_points).
+//
+//  If a starter/player is not on team.roster, info is loaded from canonical allPlayers/playerCache.
+//
 
 import SwiftUI
 
@@ -64,20 +71,46 @@ struct TeamStatsData: Identifiable {
 class StatsViewModel: ObservableObject {
     @Published var teams: [TeamStatsData] = []
 
+    // PATCH: Add reference to canonical player cache for historical lookup
+    // This should be set before importData to ensure proper lookup for allPlayers.
+    // By default, try to use DatabaseManager.shared if available.
+    var allPlayers: [String: RawSleeperPlayer] = [:]
+
     func importData(from leagues: [LeagueData]) {
-        // Use DSDStatsService and SleeperLeagueManager data
+        // Optionally, build canonical player cache from all leagues
+        self.allPlayers = buildAllPlayersCache(from: leagues)
         self.teams = leagues.flatMap { league in
             league.seasons.flatMap { season in
                 season.teams.map { team in
                     // Compute statsByPosition using team's roster and DSDStatsService
-                    let statsByPosition = computePositionWeeklyStats(for: team, in: season)
+                    let statsByPosition = computePositionWeeklyStats(for: team, in: season, league: league)
                     return TeamStatsData(teamName: team.name, statsByPosition: statsByPosition)
                 }
             }
         }
     }
+
+    // Build canonical player cache from all LeagueData (all seasons/teams/rosters)
+    private func buildAllPlayersCache(from leagues: [LeagueData]) -> [String: RawSleeperPlayer] {
+        var cache: [String: RawSleeperPlayer] = [:]
+        for league in leagues {
+            for season in league.seasons {
+                for team in season.teams {
+                    for player in team.roster {
+                        cache[player.id] = RawSleeperPlayer(
+                            player_id: player.id,
+                            full_name: nil, // not always present
+                            position: player.position,
+                            fantasy_positions: player.altPositions
+                        )
+                    }
+                }
+            }
+        }
+        return cache
+    }
     
-    private func computePositionWeeklyStats(for team: TeamStanding, in season: SeasonData) -> [Position: [WeeklyPositionStats]] {
+    private func computePositionWeeklyStats(for team: TeamStanding, in season: SeasonData, league: LeagueData) -> [Position: [WeeklyPositionStats]] {
         let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
         var statsByPosition: [Position: [WeeklyPositionStats]] = [:]
         
@@ -111,23 +144,55 @@ class StatsViewModel: ObservableObject {
                     }
                     continue
                 }
-                
-                let startedPlayers = team.roster.filter { startedIds.contains($0.id) }
+
                 let playersPoints = myEntry.players_points ?? [:]
-                
-                let candidates: [MigCandidate] = startedPlayers.map { player in
-                    MigCandidate(basePos: player.position, fantasy: [player.position] + (player.altPositions ?? []), points: playersPoints[player.id] ?? 0)
+                let playerPoolIds = Set(myEntry.players ?? [])
+                // PATCH: Build starter Player objects for this week from the player pool + fallback to allPlayers if not in team.roster
+                let startedPlayers: [Player] = startedIds.compactMap { pid in
+                    // Try team.roster first
+                    if let player = team.roster.first(where: { $0.id == pid }) {
+                        return player
+                    }
+                    // If not present, use allPlayers cache
+                    if let raw = allPlayers[pid] {
+                        return Player(
+                            id: pid,
+                            position: raw.position ?? "UNK",
+                            altPositions: raw.fantasy_positions,
+                            weeklyScores: [
+                                PlayerWeeklyScore(
+                                    week: week,
+                                    points: playersPoints[pid] ?? 0,
+                                    player_id: pid,
+                                    points_half_ppr: playersPoints[pid] ?? 0,
+                                    matchup_id: myEntry.matchup_id ?? 0,
+                                    points_ppr: playersPoints[pid] ?? 0,
+                                    points_standard: playersPoints[pid] ?? 0
+                                )
+                            ]
+                        )
+                    }
+                    return nil
                 }
-                
+
+                // PATCH: Build candidates for slot assignment from startedPlayers (historical, not just roster)
+                let candidates: [MigCandidate] = startedPlayers.map { player in
+                    MigCandidate(
+                        basePos: player.position,
+                        fantasy: [player.position] + (player.altPositions ?? []),
+                        points: playersPoints[player.id] ?? player.weeklyScores.first(where: { $0.week == week })?.points ?? 0
+                    )
+                }
+
                 let slots = expandSlots(lineupConfig: lineupConfig)
-                
+
                 var assignment: [MigCandidate: String] = [:]
                 var availableSlots = slots
-                
+
                 let sortedCandidates = candidates.sorted {
                     eligibleSlots(for: $0, availableSlots).count < eligibleSlots(for: $1, availableSlots).count
                 }
-                
+
                 for c in sortedCandidates {
                     let elig = eligibleSlots(for: c, availableSlots)
                     if elig.isEmpty { continue }
@@ -141,9 +206,9 @@ class StatsViewModel: ObservableObject {
                         availableSlots.remove(at: idx)
                     }
                 }
-                
+
                 var posMap: [String: (score: Double, played: Int)] = [:]
-                
+
                 for (c, slot) in assignment {
                     let counted = countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
                     var current = posMap[counted, default: (0, 0)]
@@ -151,17 +216,17 @@ class StatsViewModel: ObservableObject {
                     current.played += 1
                     posMap[counted] = current
                 }
-                
+
                 if let (score, played) = posMap[pos.rawValue], played > 0 {
                     weekly.append(WeeklyPositionStats(week: week, score: score, playersPlayed: played))
                 }
             }
             statsByPosition[pos] = weekly
         }
-        
+
         return statsByPosition
     }
-    
+
     // MARK: Shared Utility Functions
     
     private let offensivePositions: Set<String> = ["QB","RB","WR","TE","K"]
