@@ -7,11 +7,16 @@
 //  PATCH: All "actual" lineup, bench, and per-position/slot stats for a given week use the historical player pool from weekly matchup data,
 //         not just the final team.roster. For missing players, uses canonical player cache (allPlayers).
 //
+//  PATCHED: All usages of player positions for grouping, filtering, stat aggregation, starter counting, and reporting
+//           (especially for DL, LB, DB and their variants) are now passed through PositionNormalizer.normalize(_).
+//
 
 import SwiftUI
 
+// MARK: - Position Color Helper (patched to use normalized position)
 private func positionColor(_ pos: String) -> Color {
-    switch pos {
+    let norm = PositionNormalizer.normalize(pos)
+    switch norm {
     case "QB": return .red
     case "RB": return .green
     case "WR": return .blue
@@ -103,6 +108,7 @@ struct MyTeamView: View {
         return uniqueWeeks.map { "Wk \($0)" } + ["SZN"]
     }
 
+    // PATCH: All stat grouping/aggregation positions are normalized
     private let mainPositions = ["QB","RB","WR","TE","K","DL","LB","DB"]
 
     private var showEmptyState: Bool {
@@ -474,7 +480,7 @@ struct MyTeamView: View {
                     HStack {
                         Text(item.slot)
                             .frame(maxWidth: .infinity / 3, alignment: .leading)
-                        Text(item.playerPos)
+                        Text(PositionNormalizer.normalize(item.playerPos))
                             .frame(maxWidth: .infinity / 3, alignment: .center)
                         Text(String(format: "%.2f", item.score))
                             .frame(maxWidth: .infinity / 3, alignment: .trailing)
@@ -487,7 +493,7 @@ struct MyTeamView: View {
                     HStack {
                         Text("BN")
                             .frame(maxWidth: .infinity / 3, alignment: .leading)
-                        Text(player.pos)
+                        Text(PositionNormalizer.normalize(player.pos))
                             .frame(maxWidth: .infinity / 3, alignment: .center)
                         Text(String(format: "%.2f", player.score))
                             .frame(maxWidth: .infinity / 3, alignment: .trailing)
@@ -617,7 +623,7 @@ struct MyTeamView: View {
         let posSet: Set<String> = ["QB","RB","WR","TE","K","DL","LB","DB"]
         if let config = selectedTeamSeason?.lineupConfig {
             return config.reduce(into: [String:Int]()) { acc, pair in
-                let key = pair.key.uppercased()
+                let key = PositionNormalizer.normalize(pair.key)
                 if posSet.contains(key) {
                     acc[key, default: 0] += pair.value
                 }
@@ -625,7 +631,7 @@ struct MyTeamView: View {
         }
         if let raw = league?.startingLineup {
             return raw.reduce(into: [String:Int]()) { acc, slot in
-                let u = slot.uppercased()
+                let u = PositionNormalizer.normalize(slot)
                 if posSet.contains(u) {
                     acc[u, default: 0] += 1
                 }
@@ -643,7 +649,8 @@ struct MyTeamView: View {
     }
 
     private func positionPoints(in team: TeamStanding, week: Int, pos: String) -> Double {
-        // PATCH: Use weekly player pool for position points
+        // PATCH: Use normalized position for all grouping, including weekly player pool
+        let normPos = PositionNormalizer.normalize(pos)
         guard let league = league,
               let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
@@ -657,14 +664,15 @@ struct MyTeamView: View {
                 ?? allPlayers[pid].map { raw in
                     Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
                 }
-            if player?.position == pos {
+            if PositionNormalizer.normalize(player?.position ?? "UNK") == normPos {
                 total += playersPoints[pid] ?? 0
             }
         }
         return total
     }
     private func numberOfStarters(in team: TeamStanding, week: Int, pos: String) -> Int {
-        // PATCH: Use weekly player pool for starter count
+        // PATCH: Use normalized position for count
+        let normPos = PositionNormalizer.normalize(pos)
         guard let league = league,
               let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
@@ -676,45 +684,48 @@ struct MyTeamView: View {
                 ?? allPlayers[playerId].map { raw in
                     Player(id: playerId, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
                 }
-            return player?.position == pos
+            return PositionNormalizer.normalize(player?.position ?? "UNK") == normPos
         }.count
     }
     private func positionPPW(_ pos: String) -> Double {
-        if let a = aggregated { return a.positionAvgPPW[pos] ?? 0 }
+        let normPos = PositionNormalizer.normalize(pos)
+        if let a = aggregated { return a.positionAvgPPW[normPos] ?? 0 }
         if selectedWeek == "SZN" {
-            return selectedTeamSeason?.positionAverages?[pos] ?? 0
+            return selectedTeamSeason?.positionAverages?[normPos] ?? 0
         } else if let week = getSelectedWeekNumber(), let t = selectedTeamSeason {
-            return positionPoints(in: t, week: week, pos: pos)
+            return positionPoints(in: t, week: week, pos: normPos)
         } else {
             return 0
         }
     }
     private func individualPPW(_ pos: String) -> Double {
-        if let a = aggregated { return a.individualPositionPPW[pos] ?? 0 }
+        let normPos = PositionNormalizer.normalize(pos)
+        if let a = aggregated { return a.individualPositionPPW[normPos] ?? 0 }
         if selectedWeek == "SZN" {
-            return selectedTeamSeason?.individualPositionAverages?[pos] ?? 0
+            return selectedTeamSeason?.individualPositionAverages?[normPos] ?? 0
         } else if let week = getSelectedWeekNumber(), let t = selectedTeamSeason {
-            let posPoints = positionPPW(pos)
-            let numStarters = numberOfStarters(in: t, week: week, pos: pos)
+            let posPoints = positionPPW(normPos)
+            let numStarters = numberOfStarters(in: t, week: week, pos: normPos)
             return numStarters > 0 ? posPoints / Double(numStarters) : 0
         } else {
             return 0
         }
     }
     private func averageActualStarters(_ pos: String) -> Double {
+        let normPos = PositionNormalizer.normalize(pos)
         if let agg = aggregated {
             guard agg.actualStarterWeeks > 0 else { return 0 }
-            return Double(agg.actualStarterPositionCountsTotals[pos] ?? 0) / Double(agg.actualStarterWeeks)
+            return Double(agg.actualStarterPositionCountsTotals[normPos] ?? 0) / Double(agg.actualStarterWeeks)
         }
         if selectedWeek == "SZN" {
             if let t = selectedTeamSeason,
                let weeks = t.actualStarterWeeks,
                weeks > 0 {
-                return Double(t.actualStarterPositionCounts?[pos] ?? 0) / Double(weeks)
+                return Double(t.actualStarterPositionCounts?[normPos] ?? 0) / Double(weeks)
             }
             return 0
         } else if let week = getSelectedWeekNumber(), let t = selectedTeamSeason {
-            return Double(numberOfStarters(in: t, week: week, pos: pos))
+            return Double(numberOfStarters(in: t, week: week, pos: normPos))
         } else {
             return 0
         }
@@ -773,11 +784,12 @@ struct MyTeamView: View {
         }
     }
     private func leaguePosPPW(_ pos: String) -> Double {
+        let normPos = PositionNormalizer.normalize(pos)
         if selectedWeek == "SZN" {
-            return average(seasonTeams.compactMap { $0.positionAverages?[pos] })
+            return average(seasonTeams.compactMap { $0.positionAverages?[normPos] })
         } else if let week = getSelectedWeekNumber() {
             let teamPosPoints = seasonTeams.map { team in
-                positionPoints(in: team, week: week, pos: pos)
+                positionPoints(in: team, week: week, pos: normPos)
             }
             return average(teamPosPoints)
         } else {
@@ -785,12 +797,13 @@ struct MyTeamView: View {
         }
     }
     private func leagueIndividualPPW(_ pos: String) -> Double {
+        let normPos = PositionNormalizer.normalize(pos)
         if selectedWeek == "SZN" {
-            return average(seasonTeams.compactMap { $0.individualPositionAverages?[pos] })
+            return average(seasonTeams.compactMap { $0.individualPositionAverages?[normPos] })
         } else if let week = getSelectedWeekNumber() {
             let teamIndPPW = seasonTeams.map { team in
-                let posPoints = positionPPW(pos)
-                let numStarters = numberOfStarters(in: team, week: week, pos: pos)
+                let posPoints = positionPPW(normPos)
+                let numStarters = numberOfStarters(in: team, week: week, pos: normPos)
                 return numStarters > 0 ? posPoints / Double(numStarters) : 0
             }
             return average(teamIndPPW)
@@ -860,13 +873,13 @@ struct MyTeamView: View {
 
     private func allowedPositions(for slot: String) -> Set<String> {
         switch slot.uppercased() {
-        case "QB","RB","WR","TE","K","DL","LB","DB": return [slot.uppercased()]
-        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return ["RB","WR","TE"]
-        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return ["QB","RB","WR","TE"]
+        case "QB","RB","WR","TE","K","DL","LB","DB": return [PositionNormalizer.normalize(slot)]
+        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return ["RB","WR","TE"].map(PositionNormalizer.normalize)
+        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return ["QB","RB","WR","TE"].map(PositionNormalizer.normalize)
         case "IDP": return ["DL","LB","DB"]
         default:
             if slot.uppercased().contains("IDP") { return ["DL","LB","DB"] }
-            return [slot.uppercased()]
+            return [PositionNormalizer.normalize(slot)]
         }
     }
 
@@ -876,19 +889,19 @@ struct MyTeamView: View {
     }
 
     private func isEligible(_ c: (id: String, pos: String, altPos: [String], score: Double), allowed: Set<String>) -> Bool {
-        if allowed.contains(c.pos) { return true }
-        return !allowed.intersection(Set(c.altPos)).isEmpty
+        let normBase = PositionNormalizer.normalize(c.pos)
+        let normAlt = c.altPos.map { PositionNormalizer.normalize($0) }
+        if allowed.contains(normBase) { return true }
+        return !allowed.intersection(Set(normAlt)).isEmpty
     }
 
     // MARK: PATCHED: Use weekly player pool, not just team.roster, for all per-week actual lineup and bench logic.
 
     private func assignPlayersToSlotsPatched(team: TeamStanding, week: Int, slots: [String], myEntry: MatchupEntry, playerCache: [String: RawSleeperPlayer]) -> [AssignedSlot] {
-        // For a given week, assign each starter to their slot, pulling info from the weekly player pool and player cache as needed.
         guard let starters = myEntry.starters, let playersPoints = myEntry.players_points, let playersPool = myEntry.players else { return [] }
         var results: [AssignedSlot] = []
         let playerDict: [String: Player] = {
             var dict = [String: Player]()
-            // Build from weekly player pool, not just team.roster
             for pid in playersPool {
                 if let player = team.roster.first(where: { $0.id == pid }) {
                     dict[pid] = player
@@ -898,7 +911,6 @@ struct MyTeamView: View {
             }
             return dict
         }()
-        // Defensive: pad starters to slots count if needed
         let paddedStarters: [String] = {
             if starters.count < slots.count {
                 return starters + Array(repeating: "0", count: slots.count - starters.count)
@@ -934,7 +946,6 @@ struct MyTeamView: View {
     }
 
     private func computeWeeklyLineupPointsPatched(team: TeamStanding, week: Int) -> (Double, Double, Double, Double, Double, Double) {
-        // actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef
         guard let league = league,
               let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
@@ -955,7 +966,7 @@ struct MyTeamView: View {
                 ?? playerCache[pid].map { raw in
                     Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
                 }
-            let pos = p?.position ?? "UNK"
+            let pos = PositionNormalizer.normalize(p?.position ?? "UNK")
             let score = playersPoints[pid] ?? 0
             actualTotal += score
             if offensivePositions.contains(pos) {
@@ -971,9 +982,10 @@ struct MyTeamView: View {
                     Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
                 }
             guard let p = p else { return nil }
-            return (id: pid, pos: p.position, altPos: p.altPositions ?? [], score: playersPoints[pid] ?? 0)
+            let basePos = PositionNormalizer.normalize(p.position)
+            let altPos = (p.altPositions ?? []).map { PositionNormalizer.normalize($0) }
+            return (id: pid, pos: basePos, altPos: altPos, score: playersPoints[pid] ?? 0)
         }
-        // Slot assignment logic: try to fill strict positions first, then flex
         var strictSlots: [String] = []
         var flexSlots: [String] = []
         for slot in startingSlots {
@@ -1005,6 +1017,7 @@ struct MyTeamView: View {
         return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
     }
 
+    // PATCH: All offensive/defensive groupings use normalized positions
     private let offensivePositions: Set<String> = ["QB", "RB", "WR", "TE", "K"]
     private let defensivePositions: Set<String> = ["DL", "LB", "DB"]
     private let offensiveFlexSlots: Set<String> = [
