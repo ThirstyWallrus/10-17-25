@@ -6,6 +6,7 @@
 //  Added:
 //   - Persistence of last selected league per username
 //   - Helper to load persisted selection
+//   - OwnerId aware team selection (uses Sleeper userId if available)
 //
 
 import SwiftUI
@@ -17,6 +18,7 @@ final class AppSelection: ObservableObject {
     @Published var selectedTeamId: String? = nil      // current season team id
     @Published var selectedSeason: String = ""        // season id or "All Time"
 
+    // Helper to get last selected league key
     private func lastSelectedLeagueKey(for username: String) -> String {
         "dsd.lastSelectedLeague.\(username)"
     }
@@ -47,7 +49,8 @@ final class AppSelection: ObservableObject {
 
     /// Updates leagues and (re)selects a league/team.
     /// - Persists selectedLeagueId for the given username.
-    func updateLeagues(_ newLeagues: [LeagueData], username: String? = nil) {
+    /// - Owner-aware: Uses Sleeper userId if available to match team to current user.
+    func updateLeagues(_ newLeagues: [LeagueData], username: String? = nil, sleeperUserId: String? = nil) {
         leagues = newLeagues
 
         guard !newLeagues.isEmpty else {
@@ -70,13 +73,22 @@ final class AppSelection: ObservableObject {
         let latestSeasonId = league.seasons.sorted { $0.id < $1.id }.last?.id
         selectedSeason = latestSeasonId ?? "All Time"
 
-        if let username = username,
-           let team = league.teams.first(where: { $0.name == username || $0.ownerId == username }) {
-            selectedTeamId = team.id
-            userTeam = team.name
+        // OwnerId-aware team selection logic
+        if let sleeperId = sleeperUserId,
+           let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
+           let userTeam = latestSeason.teams.first(where: { $0.ownerId == sleeperId }) {
+            selectedTeamId = userTeam.id
+            userTeam = userTeam.name
+        } else if let username = username,
+                  let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
+                  let teamByName = latestSeason.teams.first(where: { $0.name == username }) {
+            selectedTeamId = teamByName.id
+            userTeam = teamByName.name
         } else {
-            selectedTeamId = league.teams.first?.id
-            userTeam = league.teams.first?.name ?? ""
+            // Fallback: select first team in latest season
+            let firstTeam = league.seasons.sorted(by: { $0.id < $1.id }).last?.teams.first
+            selectedTeamId = firstTeam?.id
+            userTeam = firstTeam?.name ?? ""
         }
 
         if let user = username {

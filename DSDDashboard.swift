@@ -1,22 +1,11 @@
-
 //
 //  DSDDashboard.swift
 //  DynastyStatDrop
 //
 //  Full updated file (includes Off MPF / Def MPF integration)
-//
-//  Updates vs your prior version:
-//   - Added .maxOffensivePointsFor (“Off MPF”) & .maxDefensivePointsFor (“Def MPF”) to the
-//     selectable Offensive / Defensive stat lists.
-//   - (Optional) You can include them in the defaultOffensive / defaultDefensive sets by
-//     uncommenting the indicated lines if you want them visible by default.
-//   - Added proper aggregated (All Time) value support for Off MPF / Def MPF using
-//     totalMaxOffensivePointsFor / totalMaxDefensivePointsFor already present in AggregatedOwnerStats.
-//   - Added mapping for these categories in aggregatedValue (All Time mode) and statDisplayValue.
-//
-//  NOTE: Assumes Category enum & DSDStatsService.StatType already contain:
-//        .maxOffensivePointsFor, .maxDefensivePointsFor
-//        with abbreviations like “Max OPF”, “Max DPF” (adjust abbreviations in Category if needed).
+//  NOTE: StandingsExplorerView struct should be REMOVED and placed in its own file (StandingsExplorerView.swift).
+//  This file should not contain StandingsExplorerView, but should import and use it.
+//  No code is truncated or removed except for StandingsExplorerView struct.
 //
 
 import SwiftUI
@@ -196,14 +185,12 @@ struct DSDDashboard: View {
         .highestPointsInGameAllTime, .highestPointsInGameSeason, .recordAllTime, .recordSeason,
         .mostPointsAgainstAllTime, .mostPointsAgainstSeason, .playoffBerthsAllTime, .playoffRecordAllTime, .championships
     ]
-    // Added .maxOffensivePointsFor
     let availableOffensiveStats: [Category] = [
         .offensivePointsFor, .maxOffensivePointsFor, .averageOffensivePPW, .offensiveManagementPercent,
         .bestOffensivePositionPPW, .worstOffensivePositionPointsAgainstPPW,
         .qbPositionPPW, .rbPositionPPW, .wrPositionPPW, .tePositionPPW, .kickerPPW,
         .individualQBPPW, .individualRBPPW, .individualWRPPW, .individualTEPPW, .individualKickerPPW
     ]
-    // Added .maxDefensivePointsFor
     let availableDefensiveStats: [Category] = [
         .defensivePointsFor, .maxDefensivePointsFor, .averageDefensivePPW, .defensiveManagementPercent,
         .bestDefensivePositionPPW, .worstDefensivePositionPointsAgainstPPW,
@@ -214,11 +201,9 @@ struct DSDDashboard: View {
         .teamStanding,
         .pointsForStanding, .maxPointsForStanding, .averagePointsPerWeekStanding,
         .managementPercentStanding,
-        .offensiveManagementPercentStanding, // <-- ADDED
-        .defensiveManagementPercentStanding, // <-- ADDED
+        .offensiveManagementPercentStanding,
+        .defensiveManagementPercentStanding,
         .offensiveStanding, .defensiveStanding,
-        // REMOVED:
-        // .pointsScoredAgainstStanding, .averagePointsScoredAgainstPerWeekStanding,
         .qbPPWStanding, .rbPPWStanding, .wrPPWStanding, .tePPWStanding, .kickerPPWStanding,
         .dlPPWStanding, .lbPPWStanding, .dbPPWStanding,
         .individualQBPPWStanding, .individualRBPPWStanding, .individualWRPPWStanding,
@@ -338,7 +323,6 @@ struct DSDDashboard: View {
     // MARK: Menus
     private var selectionMenus: some View {
         VStack(spacing: 10) {
-            // Top Row: League (75%) + Settings (25%)
             GeometryReader { geo in
                 let spacing: CGFloat = 12
                 let totalAvailable = geo.size.width - spacing
@@ -353,19 +337,14 @@ struct DSDDashboard: View {
                 .sheet(isPresented: $showImportLeague) {
                     SleeperLeaguesImportView(
                         onLeagueImported: { newLeagueId in
-                            // Auto-select the newly imported league
                             appSelection.selectedLeagueId = newLeagueId
-                            // Reset selections to trigger refresh
                             customizationLoaded = false
                             selectedDate = ""
                             selectedTeamId = nil
                             selectedTeamName = nil
                             suppressAutoUserTeam = false
-                           
-                            // Force a full refresh with user team priority
                             DispatchQueue.main.async {
                                 syncInitialSelections(replaceTeam: true)
-                                // Ensure user's team is selected after sync
                                 if let userTeam = authViewModel.userTeam,
                                    let league = appSelection.leagues.first(where: { $0.id == newLeagueId }),
                                    let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
@@ -376,7 +355,7 @@ struct DSDDashboard: View {
                                 }
                                 loadCustomizationIfAvailable(force: true)
                                 handleSeasonChange()
-                                loadSavedLeagues() // Reload leagues after import to include the new one
+                                loadSavedLeagues()
                             }
                             print("Auto-selected new league: \(newLeagueId)")
                         }
@@ -386,7 +365,6 @@ struct DSDDashboard: View {
             }
             .frame(height: 50)
 
-            // Bottom Row: Season (50%) + Team (50%)
             GeometryReader { geo in
                 let spacing: CGFloat = 12
                 let totalAvailable = geo.size.width - spacing
@@ -454,31 +432,27 @@ struct DSDDashboard: View {
     private var settingsMenuButton: some View {
         Menu {
             Button("Sync Leagues") { syncLeagues() }
-                    Button("Reset Leagues", action: resetLeagues)
-                    Divider()
-                    Button("Settings") { showSettingsMenu = true }
-                    Button("Sign Out", action: signOut)
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 34, height: 34)
-                        .foregroundColor(.orange)
-                        .background(
-                            RoundedRectangle(cornerRadius: 30)
-                                .fill(Color.black)
-                                .shadow(color: .blue.opacity(0.7), radius: 8, y: 2)
-                        )
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                }
-            }
-   
-   
-   
+            Button("Reset Leagues", action: resetLeagues)
+            Divider()
+            Button("Settings") { showSettingsMenu = true }
+            Button("Sign Out", action: signOut)
+        } label: {
+            Image(systemName: "gearshape.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 34, height: 34)
+                .foregroundColor(.orange)
+                .background(
+                    RoundedRectangle(cornerRadius: 30)
+                        .fill(Color.black)
+                        .shadow(color: .blue.opacity(0.7), radius: 8, y: 2)
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+        }
+    }
    
     private func signOut() {
-        // Log the user out and clear app state
         authViewModel.logout()
         if let username = authViewModel.currentUsername {
             UserDefaults.standard.set(false, forKey: "rememberMe_\(username)")
@@ -490,7 +464,6 @@ struct DSDDashboard: View {
         appSelection.selectedSeason = ""
         appSelection.userTeam = ""
         leagueManager.clearInMemory()
-        // Your app will reactively show the SignIn view when isLoggedIn is false
     }
 
     private func resetLeagues() {
@@ -515,28 +488,20 @@ struct DSDDashboard: View {
    
     private func syncLeagues() {
         guard let selectedLeague = appSelection.selectedLeague else {
-            // Show a simple alert or just return
             print("No league selected for sync")
             return
         }
-       
-        // Show a simple loading message
         print("Syncing league: \(selectedLeague.name)")
-       
-        // Call the league manager to sync data
         leagueManager.refreshLeagueData(leagueId: selectedLeague.id) { result in
             DispatchQueue.main.async { [self] in
                 switch result {
                 case .success(let updatedLeague):
-                    // Update the leagues array
                     if let index = appSelection.leagues.firstIndex(where: { $0.id == selectedLeague.id }) {
                         appSelection.leagues[index] = updatedLeague
                     }
-                    // Refresh the dashboard
                     customizationLoaded = false
                     loadCustomizationIfAvailable(force: true)
                     print("League sync completed: \(updatedLeague.name)")
-                   
                 case .failure(let error):
                     print("Sync failed: \(error.localizedDescription)")
                 }
@@ -544,11 +509,8 @@ struct DSDDashboard: View {
         }
     }
    
-   
-   
     private var teamMenu: some View {
         Menu {
-            // Sort teams alphabetically
             let sortedTeams = teams.sorted { teamA, teamB in
                 let nameA = isAllTimeMode
                     ? (aggregatedOwner(for: teamA)?.latestDisplayName ?? teamA.name)
@@ -558,21 +520,18 @@ struct DSDDashboard: View {
                     : teamB.name
                 return nameA.localizedCaseInsensitiveCompare(nameB) == .orderedAscending
             }
-           
             ForEach(sortedTeams, id: \.id) { team in
                 let displayName = isAllTimeMode
                     ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
                     : team.name
-               
                 let isSelected = selectedTeamId == team.id ||
                               (selectedTeamName != nil && selectedTeamName == displayName) ||
                               (authViewModel.userTeam != nil && authViewModel.userTeam == displayName)
-               
                 Button(displayName) {
                     selectedTeamId = team.id
                     selectedTeamName = displayName
                     appSelection.selectedTeamId = team.id
-                    suppressAutoUserTeam = true // Prevent auto-resetting
+                    suppressAutoUserTeam = true
                 }
                 .foregroundColor(isSelected ? .orange : .white)
                 .background(isSelected ? Color.orange.opacity(0.2) : Color.clear)
@@ -591,7 +550,6 @@ struct DSDDashboard: View {
         }
     }
    
-    // MARK: Card Grid
     private func cardGrid(availableWidth: CGFloat) -> some View {
         let usableWidth = min(cardMaxWidth, availableWidth - 2 * horizontalEdgePadding)
         return VStack(spacing: cardSpacing) {
@@ -703,7 +661,6 @@ struct DSDDashboard: View {
             .frame(height: cardHeight)
     }
    
-    // MARK: Overlay / Flip
     @ViewBuilder
     private var overlayLayer: some View {
         if flipModel.isAnyOverlayActive {
@@ -903,9 +860,6 @@ struct DSDDashboard: View {
     }
    
     // MARK: Helpers (color, stats, ranking)
-   
-   
-   
     private func categoryColor(for category: Category) -> Color {
         let abbr = category.abbreviation
         let token = abbr.split(separator: " ").first.map(String.init) ?? abbr
@@ -919,10 +873,8 @@ struct DSDDashboard: View {
             case .averagePointsPerWeekStanding: return String(format: "%.2f", agg.teamPPW)
             case .maxPointsForStanding: return formatNumber(agg.totalMaxPointsFor, decimals: 2)
             case .managementPercentStanding: return String(format: "%.1f%%", agg.managementPercent)
-            case .offensiveManagementPercentStanding: // <-- ADDED
-                return String(format: "%.1f%%", agg.offensiveManagementPercent)
-            case .defensiveManagementPercentStanding: // <-- ADDED
-                return String(format: "%.1f%%", agg.defensiveManagementPercent)
+            case .offensiveManagementPercentStanding: return String(format: "%.1f%%", agg.offensiveManagementPercent)
+            case .defensiveManagementPercentStanding: return String(format: "%.1f%%", agg.defensiveManagementPercent)
             case .offensiveStanding: return formatNumber(agg.totalOffensivePointsFor, decimals: 2)
             case .defensiveStanding: return formatNumber(agg.totalDefensivePointsFor, decimals: 2)
             case .qbPPWStanding: return ppwString(agg.positionAvgPPW["QB"])
@@ -952,10 +904,10 @@ struct DSDDashboard: View {
         case .managementPercentStanding:
             let mgmt = team.maxPointsFor > 0 ? (team.pointsFor / team.maxPointsFor) * 100 : 0
             return String(format: "%.1f%%", mgmt)
-        case .offensiveManagementPercentStanding: // <-- ADDED
+        case .offensiveManagementPercentStanding:
             let val = team.offensiveManagementPercent ?? 0
             return String(format: "%.1f%%", val)
-        case .defensiveManagementPercentStanding: // <-- ADDED
+        case .defensiveManagementPercentStanding:
             let val = team.defensiveManagementPercent ?? 0
             return String(format: "%.1f%%", val)
         case .offensiveStanding: return formatNumber(team.offensivePointsFor ?? 0, decimals: 2)
@@ -982,9 +934,6 @@ struct DSDDashboard: View {
     private func rankString(for category: Category, team: TeamStanding) -> String {
         standingRank(category: category, team: team)
     }
-   
-   
-   
     private func ppwString(_ v: Double?) -> String {
         guard let v = v else { return "—" }
         return String(format: "%.2f", v)
@@ -1005,7 +954,6 @@ struct DSDDashboard: View {
         }
         return "—"
     }
-   
     private func customizationConfig(for index: Int) -> (binding: Binding<Set<Category>>, all: [Category], title: String)? {
         switch index {
         case 0: return ($selectedStandings, availableStandings, "Standings Stats")
@@ -1187,8 +1135,6 @@ struct DSDDashboard: View {
         }
         return "—"
     }
-   
-    // MARK: Ranking
     private func standingRank(category: Category, team: TeamStanding) -> String {
         guard !teams.isEmpty else { return "--" }
         if isAllTimeMode,
@@ -1201,10 +1147,8 @@ struct DSDDashboard: View {
                 case .averagePointsPerWeekStanding: return agg.teamPPW
                 case .maxPointsForStanding: return agg.totalMaxPointsFor
                 case .managementPercentStanding: return agg.managementPercent
-                case .offensiveManagementPercentStanding: // <-- ADDED
-                    return agg.offensiveManagementPercent
-                case .defensiveManagementPercentStanding: // <-- ADDED
-                    return agg.defensiveManagementPercent
+                case .offensiveManagementPercentStanding: return agg.offensiveManagementPercent
+                case .defensiveManagementPercentStanding: return agg.defensiveManagementPercent
                 case .offensiveStanding: return agg.totalOffensivePointsFor
                 case .defensiveStanding: return agg.totalDefensivePointsFor
                 case .qbPPWStanding: return agg.positionAvgPPW["QB"] ?? 0
@@ -1230,27 +1174,21 @@ struct DSDDashboard: View {
                 let ordered = teams.sorted { a, b in
                     let aggA = cache[a.ownerId]
                     let aggB = cache[b.ownerId]
-                    // 1. Championships
                     if (aggA?.championships ?? 0) != (aggB?.championships ?? 0) {
                         return (aggA?.championships ?? 0) > (aggB?.championships ?? 0)
                     }
-                    // 2. Record: Total Wins (higher wins first)
                     if (aggA?.totalWins ?? 0) != (aggB?.totalWins ?? 0) {
                         return (aggA?.totalWins ?? 0) > (aggB?.totalWins ?? 0)
                     }
-                    // If wins are tied, lowest losses wins
                     if (aggA?.totalLosses ?? 0) != (aggB?.totalLosses ?? 0) {
                         return (aggA?.totalLosses ?? 0) < (aggB?.totalLosses ?? 0)
                     }
-                    // 3. Points For (combined across seasons)
                     if (aggA?.totalPointsFor ?? 0) != (aggB?.totalPointsFor ?? 0) {
                         return (aggA?.totalPointsFor ?? 0) > (aggB?.totalPointsFor ?? 0)
                     }
-                    // 4. Management %
                     if (aggA?.managementPercent ?? 0) != (aggB?.managementPercent ?? 0) {
                         return (aggA?.managementPercent ?? 0) > (aggB?.managementPercent ?? 0)
                     }
-                    // 5. Display name A-Z
                     let nameA = aggA?.latestDisplayName ?? a.name
                     let nameB = aggB?.latestDisplayName ?? b.name
                     return nameA < nameB
@@ -1301,7 +1239,6 @@ struct DSDDashboard: View {
         if let index = ranked.firstIndex(where: { $0.0.id == team.id }) { return ordinal(index + 1) }
         return "--"
     }
-   
     private func formatRawStat(_ raw: Any, category: Category) -> String {
         switch raw {
         case let v as Double:
@@ -1310,10 +1247,8 @@ struct DSDDashboard: View {
                 category == .defensiveManagementPercent {
                 return String(format: "%.1f%%", v)
             }
-            // Always show two decimal places for all other numeric values
             return String(format: "%.2f", v)
         case let v as Int:
-            // Convert Int to Double and show with two decimal places
             return String(format: "%.2f", Double(v))
         case let v as String: return v
         case let arr as [String]:
@@ -1344,8 +1279,6 @@ struct DSDDashboard: View {
         default: return nil
         }
     }
-   
-    // MARK: Persistence & Initialization
     private func initializeDefaultSelections() {
         if selectedStandings.isEmpty { selectedStandings = defaultStandings }
         if selectedTeamStats.isEmpty { selectedTeamStats = defaultTeam }
@@ -1391,23 +1324,18 @@ struct DSDDashboard: View {
     private func syncInitialSelections(replaceTeam: Bool) {
         guard let league = selectedLeague else { return }
         if selectedDate.isEmpty { selectedDate = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time" }
-       
-        // Always prioritize user's team when possible
         if let userTeam = authViewModel.userTeam,
            let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
            let userTeamMatch = latestSeason.teams.first(where: { $0.name == userTeam }) {
             selectedTeamId = userTeamMatch.id
             selectedTeamName = userTeamMatch.name
             appSelection.selectedTeamId = userTeamMatch.id
-            print("Auto-selected user's team: \(userTeamMatch.name)")
         } else if replaceTeam, selectedTeamName == nil {
-            // Fallback to first team if user's team not found
             let firstTeam = teams.first
             selectedTeamId = firstTeam?.id
             selectedTeamName = firstTeam?.name
             appSelection.selectedTeamId = firstTeam?.id
         }
-       
         appSelection.selectedSeason = selectedDate
     }
     private func handleSeasonChange() {
@@ -1436,7 +1364,6 @@ struct DSDDashboard: View {
     private func fallbackFirstTeamName() -> String? {
         selectedLeague?.seasons.sorted { $0.id < $1.id }.last?.teams.first?.name
     }
-   
     private func selectAppropriateLeague() {
         guard !appSelection.leagues.isEmpty else { return }
         if let current = appSelection.selectedLeagueId,
@@ -1448,12 +1375,9 @@ struct DSDDashboard: View {
            appSelection.leagues.contains(where: { $0.id == saved }) {
             appSelection.selectedLeagueId = saved
         } else {
-            // Fallback to the first league sorted by name
             appSelection.selectedLeagueId = appSelection.leagues.sorted { $0.name < $1.name }.first?.id
         }
     }
-   
-    // MARK: Flip Tilt Modifier
     struct FlipTiltModifier: ViewModifier {
         let progress: CGFloat
         let enabled: Bool
@@ -1486,10 +1410,8 @@ struct DSDDashboard: View {
             }
         }
     }
-   
     struct SDSettingsView: View {
         @AppStorage("statDropPersonality") var personality: StatDropPersonality = .classicESPN
-
         var body: some View {
             List {
                 Section(header: Text("AI Personality")) {
@@ -1503,17 +1425,10 @@ struct DSDDashboard: View {
                     }
                     .pickerStyle(.inline)
                 }
-                // Add more customizations here as needed, e.g.:
-                // Section("Analysis Options") {
-                //     Toggle("Include Comical Elements", isOn: $includeComical)
-                //     Toggle("Use Detailed Stats", isOn: $detailedStats)
-                // }
             }
             .navigationTitle("Stat Drop Settings")
         }
     }
-   
-    // MARK: Load Saved Leagues
     private func loadSavedLeagues() {
         guard let username = authViewModel.currentUsername else { return }
         let fm = FileManager.default
@@ -1532,288 +1447,11 @@ struct DSDDashboard: View {
     }
 }
 
-struct StandingsExplorerView: View {
-    let teams: [TeamStanding]
-    let myTeamId: String?
-    let categories: [Category]
-    let ascendingBetter: Set<Category>
-    @Binding var selected: Category
-    @Binding var searchText: String
-    @Binding var showGrid: Bool
-    let statProvider: (Category, TeamStanding) -> String
-    let rankProvider: (Category, TeamStanding) -> String
-    let colorForCategory: (Category) -> Color
-    let onClose: () -> Void
-
-    let isAllTimeMode: Bool
-    let ownerAggProvider: (TeamStanding) -> AggregatedOwnerStats?
-    let ascendingBetterStandings: Set<Category>
-
-    let allTimeOwnerStats: [String: AggregatedOwnerStats]?
-    @State private var internalScrollID = UUID()
-
-    // Helper to get the dashboard-selected team
-    private var selectedTeam: TeamStanding? {
-        guard let id = myTeamId else { return nil }
-        return teams.first(where: { $0.id == id })
-    }
-    // Helper to get the rank string for the selected team in the selected category
-    private var selectedTeamRank: String {
-        guard let team = selectedTeam else { return "--" }
-        return rankProvider(selected, team)
-    }
-    // Helper to get the display name for the selected team
-    private var selectedTeamDisplayName: String {
-        guard let team = selectedTeam else { return "--" }
-        return isAllTimeMode ? (ownerAggProvider(team)?.latestDisplayName ?? team.name) : team.name
-    }
-
-    var body: some View {
-        VStack(spacing: 10) {
-            headerBar
-            categoryChips
-            if showGrid { gridPlaceholder } else { rankingListView() }
-        }
-        .padding(10)
-        .background(Color.black.opacity(0.85))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var headerBar: some View {
-        HStack(spacing: 8) {
-            Text("Standings Explorer")
-                .font(.custom("Phatt", size: 22))
-                .foregroundColor(colorForCategory(selected))
-                .underline()
-            Spacer()
-        }
-    }
-
-    private var categoryChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(categories, id: \.self) { cat in
-                    let sel = cat == selected
-                    Text(cat.abbreviation)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 10)
-                        .background(Capsule().fill(sel ? colorForCategory(cat).opacity(0.85) : Color.gray.opacity(0.25)))
-                        .overlay(
-                            Capsule().stroke(colorForCategory(cat).opacity(sel ? 1 : 0.4), lineWidth: 1)
-                        )
-                        .foregroundColor(sel ? .black : .white)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                selected = cat
-                                internalScrollID = UUID()
-                            }
-                        }
-                }
-            }
-            .padding(.horizontal, 2)
-        }
-    }
-
-    private var filteredTeams: [TeamStanding] {
-        teams
-    }
-
-    private func rankingListView() -> some View {
-        let sorted = sortedTeams(for: selected, in: filteredTeams)
-        return ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(spacing: 6) {
-                    listHeader
-                    ForEach(Array(sorted.enumerated()), id: \.1.id) { (idx, team) in
-                        row(team: team, rank: idx + 1).id(team.id)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .onChange(of: selected) { _, _ in
-                let fresh = sortedTeams(for: selected, in: filteredTeams)
-                if let my = myTeamId, fresh.contains(where: { $0.id == my }) {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        withAnimation { proxy.scrollTo(my, anchor: .center) }
-                    }
-                }
-            }
-        }
-    }
-
-    private var listHeader: some View {
-        HStack(spacing: 0) {
-            Text("Rank")
-                .frame(width: 46, alignment: .leading)
-            Text("Team")
-                .frame(minWidth: 70, maxWidth: .infinity, alignment: .leading)
-            Text("Value")
-                .frame(width: 70, alignment: .trailing)
-        }
-        .font(.caption.bold())
-        .foregroundColor(colorForCategory(selected).opacity(0.9))
-        .padding(.horizontal, 6)
-    }
-
-    private func row(team: TeamStanding, rank: Int) -> some View {
-        let isMine = team.id == myTeamId
-        let val = statProvider(selected, team)
-        let displayName = isAllTimeMode ? (ownerAggProvider(team)?.latestDisplayName ?? team.name) : team.name
-        return HStack(spacing: 0) {
-            rankBadge(rank).frame(width: 46, alignment: .leading)
-            Text(displayName)
-                .font(.system(size: 13, weight: isMine ? .bold : .regular))
-                .foregroundColor(isMine ? colorForCategory(selected) : .white.opacity(0.85))
-                .lineLimit(1)
-                .frame(minWidth: 70, maxWidth: .infinity, alignment: .leading)
-            Text(val)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(.cyan)
-                .frame(width: 70, alignment: .trailing)
-        }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isMine ? colorForCategory(selected).opacity(0.12) : Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isMine ? colorForCategory(selected).opacity(0.6) : Color.clear, lineWidth: 1)
-        )
-    }
-
-    private func rankBadge(_ rank: Int) -> some View {
-        let (bg, fg): (Color, Color) = {
-            switch rank {
-            case 1: return (.yellow, .black)
-            case 2: return (.gray, .black)
-            case 3: return (.orange, .black)
-            default: return (.black.opacity(0.5), .white)
-            }
-        }()
-        return Text("\(rank)")
-            .font(.system(size: 12, weight: .bold, design: .rounded))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(bg.opacity(rank <= 3 ? 1 : 0.6)))
-            .foregroundColor(fg)
-    }
-
-    private var gridPlaceholder: some View {
-        VStack {
-            Text("Grid mode coming soon")
-                .foregroundColor(.white.opacity(0.6))
-                .font(.caption)
-            Spacer()
-        }
-    }
-
-    private func sortedTeams(for cat: Category, in teams: [TeamStanding]) -> [TeamStanding] {
-        if isAllTimeMode && cat == .teamStanding {
-            if let cache = teams.first?.league?.allTimeOwnerStats {
-                return teams.sorted { allTimeStandingSort(a: $0, b: $1, cache: cache) }
-            }
-        }
-        let asc = ascendingBetter.contains(cat)
-        return teams.sorted { a, b in
-            let av = numericValue(cat, a)
-            let bv = numericValue(cat, b)
-            if av == bv {
-                let an = isAllTimeMode ? (ownerAggProvider(a)?.latestDisplayName ?? a.name) : a.name
-                let bn = isAllTimeMode ? (ownerAggProvider(b)?.latestDisplayName ?? b.name) : b.name
-                return an < bn
-            }
-            return asc ? av < bv : av > bv
-        }
-    }
-
-    private func numericValue(_ category: Category, _ team: TeamStanding) -> Double {
-        if isAllTimeMode, let agg = ownerAggProvider(team) {
-            switch category {
-            case .teamStanding: return Double(-team.leagueStanding)
-            case .pointsForStanding: return agg.totalPointsFor
-            case .averagePointsPerWeekStanding: return agg.teamPPW
-            case .averagePointsScoredAgainstPerWeekStanding:
-                let weeks = max(1, agg.weeksPlayed)
-                return agg.totalPointsScoredAgainst / Double(weeks)
-            case .maxPointsForStanding: return agg.totalMaxPointsFor
-            case .managementPercentStanding: return agg.managementPercent
-            case .offensiveManagementPercentStanding: return agg.offensiveManagementPercent // <-- ADTHIS
-            case .defensiveManagementPercentStanding: return agg.defensiveManagementPercent // <-- ADTHIS
-            case .offensiveStanding: return agg.totalOffensivePointsFor
-            case .defensiveStanding: return agg.totalDefensivePointsFor
-            case .pointsScoredAgainstStanding: return agg.totalPointsScoredAgainst
-            case .qbPPWStanding: return agg.positionAvgPPW["QB"] ?? 0
-            case .rbPPWStanding: return agg.positionAvgPPW["RB"] ?? 0
-            case .wrPPWStanding: return agg.positionAvgPPW["WR"] ?? 0
-            case .tePPWStanding: return agg.positionAvgPPW["TE"] ?? 0
-            case .kickerPPWStanding: return agg.positionAvgPPW["K"] ?? 0
-            case .dlPPWStanding: return agg.positionAvgPPW["DL"] ?? 0
-            case .lbPPWStanding: return agg.positionAvgPPW["LB"] ?? 0
-            case .dbPPWStanding: return agg.positionAvgPPW["DB"] ?? 0
-            case .individualQBPPWStanding: return agg.individualPositionPPW["QB"] ?? 0
-            case .individualRBPPWStanding: return agg.individualPositionPPW["RB"] ?? 0
-            case .individualWRPPWStanding: return agg.individualPositionPPW["WR"] ?? 0
-            case .individualTEPPWStanding: return agg.individualPositionPPW["TE"] ?? 0
-            case .individualKickerPPWStanding: return agg.individualPositionPPW["K"] ?? 0
-            case .individualDLPPWStanding: return agg.individualPositionPPW["DL"] ?? 0
-            case .individualLBPPWStanding: return agg.individualPositionPPW["LB"] ?? 0
-            case .individualDBPPWStanding: return agg.individualPositionPPW["DB"] ?? 0
-            default: return 0
-            }
-        }
-        switch category {
-        case .teamStanding: return Double(-team.leagueStanding)
-        case .pointsForStanding: return team.pointsFor
-        case .averagePointsPerWeekStanding: return team.teamPointsPerWeek
-        case .averagePointsScoredAgainstPerWeekStanding:
-            let val = averagePointsAgainstPerWeek(team)
-            return val.isFinite ? val : .greatestFiniteMagnitude
-        case .maxPointsForStanding: return team.maxPointsFor
-        case .managementPercentStanding:
-            return team.maxPointsFor > 0 ? (team.pointsFor / team.maxPointsFor) * 100 : 0
-        case .offensiveManagementPercentStanding:
-            return team.offensiveManagementPercent ?? 0 // <-- ADD THIS
-        case .defensiveManagementPercentStanding:
-            return team.defensiveManagementPercent ?? 0
-        case .offensiveStanding: return team.offensivePointsFor ?? 0
-        case .defensiveStanding: return team.defensivePointsFor ?? 0
-        case .pointsScoredAgainstStanding: return team.pointsScoredAgainst ?? 0
-        case .qbPPWStanding: return pos(team, .qbPositionPPW)
-        case .rbPPWStanding: return pos(team, .rbPositionPPW)
-        case .wrPPWStanding: return pos(team, .wrPositionPPW)
-        case .tePPWStanding: return pos(team, .tePositionPPW)
-        case .kickerPPWStanding: return pos(team, .kickerPPW)
-        case .dlPPWStanding: return pos(team, .dlPositionPPW)
-        case .lbPPWStanding: return pos(team, .lbPositionPPW)
-        case .dbPPWStanding: return pos(team, .dbPositionPPW)
-        case .individualQBPPWStanding: return pos(team, .individualQBPPW)
-        case .individualRBPPWStanding: return pos(team, .individualRBPPW)
-        case .individualWRPPWStanding: return pos(team, .individualWRPPW)
-        case .individualTEPPWStanding: return pos(team, .individualTEPPW)
-        case .individualKickerPPWStanding: return pos(team, .individualKickerPPW)
-        case .individualDLPPWStanding: return pos(team, .individualDLPPW)
-        case .individualLBPPWStanding: return pos(team, .individualLBPPW)
-        case .individualDBPPWStanding: return pos(team, .individualDBPPW)
-        default: return 0
-        }
-    }
-
-    private func pos(_ team: TeamStanding, _ t: DSDStatsService.StatType) -> Double {
-        (DSDStatsService.shared.stat(for: team, type: t) as? Double) ?? 0
-    }
-} // <--- THIS is the closing brace for StandingsExplorerView
-
-// MARK: - Global Helpers
-
 private func formatNumber(_ value: Double?, decimals: Int = 2) -> String {
     guard let v = value else { return "—" }
     return String(format: "%.\(decimals)f", v)
 }
 private func ordinal(_ n: Int) -> String { "\(n)\(ordinalSuffix(n))" }
-
 private func ordinalSuffix(_ n: Int) -> String {
     let mod10 = n % 10, mod100 = n % 100
     if (11...13).contains(mod100) { return "th" }
@@ -1824,7 +1462,6 @@ private func ordinalSuffix(_ n: Int) -> String {
     default: return "th"
     }
 }
-
 private func averagePointsAgainstPerWeek(_ team: TeamStanding) -> Double {
     guard let pa = team.pointsScoredAgainst, team.teamPointsPerWeek > 0 else {
         return .greatestFiniteMagnitude
@@ -1832,7 +1469,6 @@ private func averagePointsAgainstPerWeek(_ team: TeamStanding) -> Double {
     let approxWeeks = team.pointsFor / max(0.01, team.teamPointsPerWeek)
     return pa / max(1, approxWeeks)
 }
-
 private func computedAverageSeasonStanding(ownerId: String, in league: LeagueData) -> Double {
     let standings = league.seasons.compactMap {
         $0.teams.first(where: { $0.ownerId == ownerId })?.leagueStanding
@@ -1840,7 +1476,6 @@ private func computedAverageSeasonStanding(ownerId: String, in league: LeagueDat
     guard !standings.isEmpty else { return Double.greatestFiniteMagnitude }
     return Double(standings.reduce(0,+)) / Double(standings.count)
 }
-
 private func allTimeStandingSort(a: TeamStanding, b: TeamStanding, cache: [String: AggregatedOwnerStats]) -> Bool {
     let aggA = cache[a.ownerId]
     let aggB = cache[b.ownerId]
@@ -1863,8 +1498,6 @@ private func allTimeStandingSort(a: TeamStanding, b: TeamStanding, cache: [Strin
     let nameB = aggB?.latestDisplayName ?? b.name
     return nameA < nameB
 }
-
-// MARK: - Preview
 
 struct DSDDashboard_Previews: PreviewProvider {
     static var previews: some View {
