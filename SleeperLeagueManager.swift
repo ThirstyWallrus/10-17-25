@@ -6,6 +6,12 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Import PositionNormalizer for canonical defensive position mapping
+import Foundation
+
+// Ensure PositionNormalizer is available to all code in this file.
+import Foundation
+
 // MARK: - Raw Sleeper API Models
 
 struct SleeperUser: Codable {
@@ -113,6 +119,9 @@ private struct LeagueIndexEntry: Codable, Equatable {
     let season: String
     let lastUpdated: Date
 }
+
+// MARK: - Position Normalizer (Global Patch)
+import Foundation
 
 @MainActor
 class SleeperLeagueManager: ObservableObject {
@@ -528,21 +537,26 @@ class SleeperLeagueManager: ObservableObject {
                         // --- PATCH: Robust position lookup for every starter ---
                         let creditedPosition: String = {
                             if let rawPlayer = allPlayers[pid], let pos = rawPlayer.position {
-                                return mappedPositionForStarter(
-                                    slotName: slots[idx],
-                                    playerPositions: [pos] + (rawPlayer.fantasy_positions ?? []),
-                                    lineupConfig: lineupConfig
+                                // PATCH: normalize the position for all stat uses
+                                return PositionNormalizer.normalize(
+                                    mappedPositionForStarter(
+                                        slotName: slots[idx],
+                                        playerPositions: [pos] + (rawPlayer.fantasy_positions ?? []),
+                                        lineupConfig: lineupConfig
+                                    )
                                 )
                             }
                             if let teamPlayer = players.first(where: { $0.id == pid }) {
-                                return mappedPositionForStarter(
-                                    slotName: slots[idx],
-                                    playerPositions: [teamPlayer.position] + (teamPlayer.altPositions ?? []),
-                                    lineupConfig: lineupConfig
+                                return PositionNormalizer.normalize(
+                                    mappedPositionForStarter(
+                                        slotName: slots[idx],
+                                        playerPositions: [teamPlayer.position] + (teamPlayer.altPositions ?? []),
+                                        lineupConfig: lineupConfig
+                                    )
                                 )
                             }
-                            // fallback: use slot itself
-                            return slots[idx].uppercased()
+                            // fallback: use slot itself (normalize)
+                            return PositionNormalizer.normalize(slots[idx].uppercased())
                         }()
                         let points = playersPoints[pid] ?? 0.0
                         actualPosStartCounts[creditedPosition, default: 0] += 1
@@ -563,13 +577,14 @@ class SleeperLeagueManager: ObservableObject {
                         weeklyActualLineupPoints[week] = thisWeekActual
                     }
                     actualTotal += thisWeekActual
-                    // Split offense/defense for this week, using position sets
+                    // Split offense/defense for this week, using position sets (normalized)
                     var weekOff = 0.0, weekDef = 0.0
                     if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
                         for pid in starters {
-                            let pos = allPlayers[pid]?.position
+                            let posRaw = allPlayers[pid]?.position
                                 ?? players.first(where: { $0.id == pid })?.position
                                 ?? ""
+                            let pos = PositionNormalizer.normalize(posRaw)
                             let points = playersPoints[pid] ?? 0.0
                             if offensivePositions.contains(pos) { weekOff += points }
                             else if defensivePositions.contains(pos) { weekDef += points }
@@ -584,8 +599,11 @@ class SleeperLeagueManager: ObservableObject {
                     guard let weeklyPlayerIds = myEntry.players else { return [] }
                     return weeklyPlayerIds.compactMap { pid in
                         let raw = allPlayers[pid]
-                        let basePos = raw?.position ?? players.first(where: { $0.id == pid })?.position ?? "UNK"
-                        let fantasy = raw?.fantasy_positions ?? [basePos]
+                        let basePosRaw = raw?.position ?? players.first(where: { $0.id == pid })?.position ?? "UNK"
+                        let basePos = PositionNormalizer.normalize(basePosRaw)
+                        let fantasyRaw = raw?.fantasy_positions ?? [basePosRaw]
+                        // normalize all eligible fantasy positions
+                        let fantasy = fantasyRaw.map { PositionNormalizer.normalize($0) }
                         let points = myEntry.players_points?[pid] ?? 0.0
                         return Candidate(id: pid, basePos: basePos, fantasy: fantasy, points: points)
                     }
@@ -609,17 +627,20 @@ class SleeperLeagueManager: ObservableObject {
                 var weekMax = 0.0, weekOff = 0.0, weekDef = 0.0
 
                 for slot in optimalOrder {
-                    let allowed = allowedPositions(for: slot)
+                    let allowed = allowedPositions(for: slot).map { PositionNormalizer.normalize($0) }
+                    let allowedSet = Set(allowed)
                     let pick = candidates
-                        .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
+                        .filter { !used.contains($0.id) && isEligible($0, allowed: allowedSet) }
                         .max(by: { $0.points < $1.points })
 
                     guard let best = pick else { continue }
                     used.insert(best.id)
                     weekMax += best.points
-                    let counted = countedPosition(for: slot,
-                                                  fantasy: best.fantasy,
-                                                  base: best.basePos)
+                    let counted = PositionNormalizer.normalize(
+                        countedPosition(for: slot,
+                                        fantasy: best.fantasy,
+                                        base: best.basePos)
+                    )
                     if offensivePositions.contains(counted) { weekOff += best.points }
                     else if defensivePositions.contains(counted) { weekDef += best.points }
                     posTotals[counted, default: 0] += best.points
@@ -772,7 +793,9 @@ class SleeperLeagueManager: ObservableObject {
         let points: Double
     }
 
+    // --- PATCH: Normalize allowed position set before checking eligibility
     private func isEligible(_ c: Candidate, allowed: Set<String>) -> Bool {
+        // Both c.basePos and c.fantasy are already normalized in buildTeams
         if allowed.contains(c.basePos) { return true }
         return !allowed.intersection(Set(c.fantasy)).isEmpty
     }
@@ -790,6 +813,7 @@ class SleeperLeagueManager: ObservableObject {
         return nil
     }
 
+    // --- PATCH: Normalize all allowed positions for slot assignment
     private func allowedPositions(for slot: String) -> Set<String> {
         let u = slot.uppercased()
         switch u {
@@ -814,6 +838,7 @@ class SleeperLeagueManager: ObservableObject {
                (u.allSatisfy({ "DLB".contains($0) }) && u.count > 1)
     }
 
+    // --- PATCH: Normalize all positions before returning for stat aggregation
     private func countedPosition(for slot: String, fantasy: [String], base: String) -> String {
         let u = slot.uppercased()
         if ["DL","LB","DB"].contains(u) { return u }
@@ -823,6 +848,7 @@ class SleeperLeagueManager: ObservableObject {
         return base
     }
 
+    // --- PATCH: Normalize all positions for slot mapping
     private func mappedPositionForStarter(
         slotName: String,
         playerPositions: [String],

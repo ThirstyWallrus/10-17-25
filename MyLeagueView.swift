@@ -348,10 +348,10 @@ struct MyLeagueView: View {
                             .bold()
                             .frame(width: 60, alignment: .trailing)
 
-                        Text(String(format: "%.1f", pf))
+                        Text(String(format: "%.2f", pf))
                             .foregroundColor(.cyan)
                             .bold()
-                            .frame(width: 60, alignment: .trailing)
+                            .frame(width: 70, alignment: .trailing)
 
                         Text(grade)
                             .font(.system(size: 22, weight: .black, design: .rounded))

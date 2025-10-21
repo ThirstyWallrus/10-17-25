@@ -4,6 +4,8 @@
 //
 //  Aggregates multi-season stats per current franchise (ownerId).
 //
+//  **PATCHED**: All defensive position usages now pass through PositionNormalizer.normalize(_).
+//
 
 import Foundation
 
@@ -34,6 +36,7 @@ struct AllTimeAggregator {
     ]
 
     private static let allStatPositions: [String] = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
+    // Use normalized position sets for offense/defense
     private static let offensivePositions: Set<String> = ["QB", "RB", "WR", "TE", "K"]
     private static let defensivePositions: Set<String> = ["DL", "LB", "DB"]
 
@@ -58,6 +61,7 @@ struct AllTimeAggregator {
         var championships = 0
         var wins = 0, losses = 0, ties = 0
 
+        // PATCH: Use normalized position for all position-based dictionaries
         var posTotals: [String: Double] = [:]
         var posStarts: [String: Int] = [:]
         var distinctWeeks: Set<String> = []
@@ -66,6 +70,7 @@ struct AllTimeAggregator {
         var totalFAAB = 0.0
         var totalTrades = 0
 
+        // These are already normalized by upstream code, but ensure normalization for safety
         var actualPosCounts: [String: Int] = [:]
         var actualWeeks = 0
 
@@ -130,8 +135,10 @@ struct AllTimeAggregator {
             totalTrades += team.tradesCompleted ?? 0
 
             if let counts = team.actualStarterPositionCounts, let weeks = team.actualStarterWeeks {
+                // PATCH: Normalize actual starter position counts (defensive)
                 for (pos, count) in counts {
-                    actualPosCounts[pos, default: 0] += count
+                    let norm = PositionNormalizer.normalize(pos)
+                    actualPosCounts[norm, default: 0] += count
                 }
                 actualWeeks += weeks
             }
@@ -182,28 +189,28 @@ struct AllTimeAggregator {
                         if let rawPlayer = playerCache[pid], let pos = rawPlayer.position {
                             return countedPosition(
                                 for: slots[idx],
-                                candidatePositions: [pos] + (rawPlayer.fantasy_positions ?? []),
-                                base: pos
+                                candidatePositions: [PositionNormalizer.normalize(pos)] + (rawPlayer.fantasy_positions?.map { PositionNormalizer.normalize($0) } ?? []),
+                                base: PositionNormalizer.normalize(pos)
                             )
                         }
                         // fallback: check in team's current roster
                         if let teamPlayer = team.roster.first(where: { $0.id == pid }) {
                             return countedPosition(
                                 for: slots[idx],
-                                candidatePositions: [teamPlayer.position] + (teamPlayer.altPositions ?? []),
-                                base: teamPlayer.position
+                                candidatePositions: [PositionNormalizer.normalize(teamPlayer.position)] + (teamPlayer.altPositions?.map { PositionNormalizer.normalize($0) } ?? []),
+                                base: PositionNormalizer.normalize(teamPlayer.position)
                             )
                         }
                         // fallback: use slot as credited position
-                        return slots[idx].uppercased()
+                        return PositionNormalizer.normalize(slots[idx])
                     }()
                     let point = entry.players_points?[pid] ?? 0.0
                     posTotals[creditedPosition, default: 0.0] += point
                     posStarts[creditedPosition, default: 0] += 1
-                    // For overall offense/defense, use base pos if available
+                    // For overall offense/defense, use normalized base pos if available
                     let basePos: String = {
-                        if let rawPlayer = playerCache[pid], let pos = rawPlayer.position { return pos }
-                        if let teamPlayer = team.roster.first(where: { $0.id == pid }) { return teamPlayer.position }
+                        if let rawPlayer = playerCache[pid], let pos = rawPlayer.position { return PositionNormalizer.normalize(pos) }
+                        if let teamPlayer = team.roster.first(where: { $0.id == pid }) { return PositionNormalizer.normalize(teamPlayer.position) }
                         return creditedPosition
                     }()
                     if offensivePositions.contains(basePos) {
@@ -298,6 +305,7 @@ struct AllTimeAggregator {
 
     /// Returns credited position for a starter: If strict slot, use slot. Otherwise, use first eligible position for flexes.
     private static func countedPosition(for slot: String, candidatePositions: [String], base: String) -> String {
+        // PATCH: Always normalize candidate positions and base for defensive slots
         let s = slot.uppercased()
         let strict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
         let offensiveFlexes: Set<String> = [
@@ -329,6 +337,8 @@ struct AllTimeAggregator {
 
     private static func maxPointsForWeek(team: TeamStanding, week: Int) -> (total: Double, off: Double, def: Double) {
         let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
+            // PATCH: Normalize position for defense
+            let pos = PositionNormalizer.normalize(player.position)
             if let score = player.weeklyScores.first(where: { $0.week == week })?.points {
                 dict[player.id] = score
             }
@@ -339,8 +349,8 @@ struct AllTimeAggregator {
         let fixedCounts = fixedSlotCounts(startingSlots: startingSlots)
 
         // Offensive
-        var offPlayerList = team.roster.filter { offensivePositions.contains($0.position) }.map {
-            (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
+        var offPlayerList = team.roster.filter { AllTimeAggregator.offensivePositions.contains(PositionNormalizer.normalize($0.position)) }.map {
+            (id: $0.id, pos: PositionNormalizer.normalize($0.position), score: playerScores[$0.id] ?? 0.0)
         }
         var maxOff = 0.0
         for pos in Array(offensivePositions) {
@@ -360,8 +370,8 @@ struct AllTimeAggregator {
         maxOff += topFlex.reduce(0.0) { $0 + $1.score }
 
         // Defensive
-        var defPlayerList = team.roster.filter { defensivePositions.contains($0.position) }.map {
-            (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
+        var defPlayerList = team.roster.filter { AllTimeAggregator.defensivePositions.contains(PositionNormalizer.normalize($0.position)) }.map {
+            (id: $0.id, pos: PositionNormalizer.normalize($0.position), score: playerScores[$0.id] ?? 0.0)
         }
         var maxDef = 0.0
         for pos in Array(defensivePositions) {
@@ -387,8 +397,10 @@ struct AllTimeAggregator {
             guard let points = playersPoints[id],
                   let raw = playerCache[id],
                   let basePos = raw.position else { return nil }
-            let fantasy = raw.fantasy_positions ?? [basePos]
-            return (id: id, basePos: basePos, fantasy: fantasy, points: points)
+            // PATCH: Normalize all positions
+            let normBase = PositionNormalizer.normalize(basePos)
+            let fantasy = (raw.fantasy_positions ?? [normBase]).map { PositionNormalizer.normalize($0) }
+            return (id: id, basePos: normBase, fantasy: fantasy, points: points)
         }
 
         // Expand slots from lineupConfig
@@ -410,8 +422,8 @@ struct AllTimeAggregator {
             guard let cand = pick else { continue }
             usedIDs.insert(cand.id)
             maxTotal += cand.points
-            if offensivePositions.contains(cand.basePos) { maxOff += cand.points }
-            else if defensivePositions.contains(cand.basePos) { maxDef += cand.points }
+            if offensivePositions.contains(PositionNormalizer.normalize(cand.basePos)) { maxOff += cand.points }
+            else if defensivePositions.contains(PositionNormalizer.normalize(cand.basePos)) { maxDef += cand.points }
         }
 
         return (maxTotal, maxOff, maxDef)
@@ -430,8 +442,8 @@ struct AllTimeAggregator {
     }
 
     private static func isEligible(c: (id: String, basePos: String, fantasy: [String], points: Double), allowed: Set<String>) -> Bool {
-        if allowed.contains(c.basePos) { return true }
-        return !allowed.intersection(Set(c.fantasy)).isEmpty
+        if allowed.contains(PositionNormalizer.normalize(c.basePos)) { return true }
+        return !allowed.intersection(Set(c.fantasy.map(PositionNormalizer.normalize))).isEmpty
     }
 
     private static func fixedSlotCounts(startingSlots: [String]) -> [String: Int] {
@@ -443,7 +455,7 @@ struct AllTimeAggregator {
         var total = 0.0
         for id in starters {
             if let player = team.roster.first(where: { $0.id == id }),
-               positions.contains(player.position),
+               positions.contains(PositionNormalizer.normalize(player.position)),
                let score = player.weeklyScores.first(where: { $0.week == week })?.points {
                 total += score
             }
@@ -504,7 +516,8 @@ struct AllTimeAggregator {
             for starterId in starters {
                 guard let point = myEntry.players_points?[starterId],
                       let rawPlayer = playerCache[starterId],
-                      let pos = rawPlayer.position else { continue }
+                      let posRaw = rawPlayer.position else { continue }
+                let pos = PositionNormalizer.normalize(posRaw)
                 weekPF += point
                 if offensivePositions.contains(pos) {
                     weekOffPF += point
@@ -618,3 +631,4 @@ extension Collection {
         indices.contains(at) ? self[at] : self[at]
     }
 }
+

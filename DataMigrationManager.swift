@@ -17,6 +17,9 @@
 
 import Foundation
 
+// --- PATCH: Import PositionNormalizer globally
+import Foundation
+
 @MainActor
 final class DataMigrationManager: ObservableObject {
 
@@ -203,9 +206,11 @@ final class DataMigrationManager: ObservableObject {
                 for i in 0..<starters.count {
                     let pid = starters[i]
                     let pts = starterPoints[pid] ?? 0.0
+                    // --- PATCH: Normalize position for defensive stat split ---
+                    let normalized = PositionNormalizer.normalize(slots[i])
                     if isOffensiveSlot(slots[i]) {
                         off += pts
-                    } else {
+                    } else if normalized == "DL" || normalized == "LB" || normalized == "DB" {
                         defPF += pts
                     }
                 }
@@ -228,16 +233,17 @@ final class DataMigrationManager: ObservableObject {
                         return nil
                     }()
                     if let pos = player?.position?.uppercased() {
-                        if offensivePositions.contains(pos) {
+                        let normalized = PositionNormalizer.normalize(pos)
+                        if offensivePositions.contains(normalized) {
                             off += pts
-                        } else if defensivePositions.contains(pos) {
+                        } else if defensivePositions.contains(normalized) {
                             defPF += pts
                         }
-                        // Update position stats
-                        posPPW[pos, default: 0] += pts
-                        indivPPW[pos, default: 0] += pts
-                        posCounts[pos, default: 0] += 1
-                        indivCounts[pos, default: 0] += 1
+                        // --- PATCH: Use normalized position for stat groupings ---
+                        posPPW[normalized, default: 0] += pts
+                        indivPPW[normalized, default: 0] += pts
+                        posCounts[normalized, default: 0] += 1
+                        indivCounts[normalized, default: 0] += 1
                     }
                 }
             }
@@ -261,10 +267,11 @@ final class DataMigrationManager: ObservableObject {
                     .max { $0.points < $1.points }
                 guard let cand = pick else { continue }
                 used.insert(cand)
+                let normalized = PositionNormalizer.normalize(slot)
                 weekMax += cand.points
                 if isOffensiveSlot(slot) {
                     weekMaxOff += cand.points
-                } else {
+                } else if normalized == "DL" || normalized == "LB" || normalized == "DB" {
                     weekMaxDef += cand.points
                 }
             }
@@ -285,7 +292,7 @@ final class DataMigrationManager: ObservableObject {
                 for c in sortedStarters {
                     let elig = eligibleSlots(for: c, availableSlots)
                     if elig.isEmpty { continue }
-                    let specific = elig.filter { ["QB","RB","WR","TE","K","DL","LB","DB"].contains($0.uppercased()) }
+                    let specific = elig.filter { ["QB","RB","WR","TE","K","DL","LB","DB"].contains(PositionNormalizer.normalize($0)) }
                     let chosen = specific.first ?? elig.first!
                     assignment[c] = chosen
                     if let idx = availableSlots.firstIndex(of: chosen) {
@@ -296,7 +303,8 @@ final class DataMigrationManager: ObservableObject {
                 // PATCHED: Use slot assignment rules for duel-designated/flex positions
                 for (c, slot) in assignment {
                     let counted = countedPosition(for: slot, candidatePositions: [c.basePos] + c.fantasy, base: c.basePos)
-                    tempCounts[counted, default: 0] += 1
+                    let normalized = PositionNormalizer.normalize(counted)
+                    tempCounts[normalized, default: 0] += 1
                 }
                 
                 tempWeeks += 1
@@ -312,6 +320,12 @@ final class DataMigrationManager: ObservableObject {
         let managementPercent = maxTotal > 0 ? (actualTotal / maxTotal) * 100 : 0
         let offensiveManagementPercent = maxOff > 0 ? (totalOffPF / maxOff) * 100 : 0
         let defensiveManagementPercent = maxDef > 0 ? (totalDefPF / maxDef) * 100 : 0
+
+        // --- PATCH: Normalize keys in posPPW and indivPPW before storing ---
+        let normalizedPosPPW = Dictionary(uniqueKeysWithValues: posPPW.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        let normalizedIndivPPW = Dictionary(uniqueKeysWithValues: indivPPW.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        let normalizedPosCounts = Dictionary(uniqueKeysWithValues: posCounts.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        let normalizedIndivCounts = Dictionary(uniqueKeysWithValues: indivCounts.map { (PositionNormalizer.normalize($0.key), $0.value) })
 
         return TeamStanding(
             id: old.id,
@@ -339,8 +353,8 @@ final class DataMigrationManager: ObservableObject {
             averageOffensivePPW: old.averageOffensivePPW,
             offensiveStrengths: old.offensiveStrengths,
             offensiveWeaknesses: old.offensiveWeaknesses,
-            positionAverages: posPPW.isEmpty ? old.positionAverages : posPPW,
-            individualPositionAverages: indivPPW.isEmpty ? old.individualPositionAverages : indivPPW,
+            positionAverages: normalizedPosPPW.isEmpty ? old.positionAverages : normalizedPosPPW,
+            individualPositionAverages: normalizedIndivPPW.isEmpty ? old.individualPositionAverages : normalizedIndivPPW,
             defensivePointsFor: totalDefPF > 0 ? totalDefPF : old.defensivePointsFor,
             maxDefensivePointsFor: maxDef > 0 ? maxDef : old.maxDefensivePointsFor,
             defensiveManagementPercent: defensiveManagementPercent,
@@ -414,7 +428,10 @@ final class DataMigrationManager: ObservableObject {
     }
 
     private func isEligible(c: MigCandidate, allowed: Set<String>) -> Bool {
-        !allowed.intersection(Set(c.fantasy)).isEmpty
+        // PATCH: Use normalized position for eligibility checks
+        let normalizedAllowed = Set(allowed.map { PositionNormalizer.normalize($0) })
+        let allCandidate = [c.basePos] + c.fantasy
+        return allCandidate.map { PositionNormalizer.normalize($0) }.contains(where: { normalizedAllowed.contains($0) })
     }
 
     private func eligibleSlots(for c: MigCandidate, _ slots: [String]) -> [String] {
@@ -423,7 +440,11 @@ final class DataMigrationManager: ObservableObject {
 
     private func inferredLineupConfig(from roster: [Player]) -> [String:Int] {
         var counts: [String:Int] = [:]
-        for p in roster { counts[p.position, default: 0] += 1 }
+        for p in roster {
+            // PATCH: Normalize position for starter slot assignment
+            let normalized = PositionNormalizer.normalize(p.position)
+            counts[normalized, default: 0] += 1
+        }
         return counts.mapValues { min($0, 3) }
     }
 
@@ -432,7 +453,7 @@ final class DataMigrationManager: ObservableObject {
     }
     
     private func slotPriority(_ slot: String) -> Int {
-        if ["QB","RB","WR","TE","K","DL","LB","DB"].contains(slot.uppercased()) { return 1 } // higher for specific
+        if ["QB","RB","WR","TE","K","DL","LB","DB"].contains(PositionNormalizer.normalize(slot)) { return 1 } // higher for specific
         return 0
     }
 

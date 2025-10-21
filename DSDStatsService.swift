@@ -7,6 +7,9 @@
 
 import Foundation
 
+// --- PATCH: Import PositionNormalizer ---
+import Foundation
+
 @MainActor
 final class DSDStatsService {
     static let shared = DSDStatsService()
@@ -71,35 +74,36 @@ final class DSDStatsService {
         case .averageDefensivePPW: return team.averageDefensivePPW
         case .bestDefensivePositionPPW: return bestDefPos(team)
         case .worstDefensivePositionPointsAgainstPPW: return worstDefPos(team)
-        case .qbPositionPPW: return team.positionAverages?["QB"]
-        case .rbPositionPPW: return team.positionAverages?["RB"]
-        case .wrPositionPPW: return team.positionAverages?["WR"]
-        case .tePositionPPW: return team.positionAverages?["TE"]
-        case .kickerPPW: return team.positionAverages?["K"]
-        case .dlPositionPPW: return team.positionAverages?["DL"]
-        case .lbPositionPPW: return team.positionAverages?["LB"]
-        case .dbPositionPPW: return team.positionAverages?["DB"]
-        case .individualQBPPW: return team.individualPositionAverages?["QB"]
-        case .individualRBPPW: return team.individualPositionAverages?["RB"]
-        case .individualWRPPW: return team.individualPositionAverages?["WR"]
-        case .individualTEPPW: return team.individualPositionAverages?["TE"]
-        case .individualKickerPPW: return team.individualPositionAverages?["K"]
-        case .individualDLPPW: return team.individualPositionAverages?["DL"]
-        case .individualLBPPW: return team.individualPositionAverages?["LB"]
-        case .individualDBPPW: return team.individualPositionAverages?["DB"]
+        // --- PATCH: Use normalized position keys for all aggregation lookups below ---
+        case .qbPositionPPW: return team.positionAverages?[PositionNormalizer.normalize("QB")]
+        case .rbPositionPPW: return team.positionAverages?[PositionNormalizer.normalize("RB")]
+        case .wrPositionPPW: return team.positionAverages?[PositionNormalizer.normalize("WR")]
+        case .tePositionPPW: return team.positionAverages?[PositionNormalizer.normalize("TE")]
+        case .kickerPPW: return team.positionAverages?[PositionNormalizer.normalize("K")]
+        case .dlPositionPPW: return team.positionAverages?[PositionNormalizer.normalize("DL")]
+        case .lbPositionPPW: return team.positionAverages?[PositionNormalizer.normalize("LB")]
+        case .dbPositionPPW: return team.positionAverages?[PositionNormalizer.normalize("DB")]
+        case .individualQBPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("QB")]
+        case .individualRBPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("RB")]
+        case .individualWRPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("WR")]
+        case .individualTEPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("TE")]
+        case .individualKickerPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("K")]
+        case .individualDLPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("DL")]
+        case .individualLBPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("LB")]
+        case .individualDBPPW: return team.individualPositionAverages?[PositionNormalizer.normalize("DB")]
         case .highestPointsInGameAllTime, .highestPointsInGameSeason, .mostPointsAgainstAllTime, .mostPointsAgainstSeason, .playoffBerthsAllTime, .playoffRecordAllTime, .headToHeadRecord: return nil
         case .offensiveStrengths: return team.offensiveStrengths ?? []
         case .offensiveWeaknesses: return team.offensiveWeaknesses ?? []
         case .defensiveStrengths: return team.defensiveStrengths ?? []
         case .defensiveWeaknesses: return team.defensiveWeaknesses ?? []
-        case .avgQBStartersPerWeek: return avgStarter(team, "QB")
-        case .avgRBStartersPerWeek: return avgStarter(team, "RB")
-        case .avgWRStartersPerWeek: return avgStarter(team, "WR")
-        case .avgTEStartersPerWeek: return avgStarter(team, "TE")
-        case .avgKStartersPerWeek: return avgStarter(team, "K")
-        case .avgDLStartersPerWeek: return avgStarter(team, "DL")
-        case .avgLBStartersPerWeek: return avgStarter(team, "LB")
-        case .avgDBStartersPerWeek: return avgStarter(team, "DB")
+        case .avgQBStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("QB"))
+        case .avgRBStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("RB"))
+        case .avgWRStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("WR"))
+        case .avgTEStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("TE"))
+        case .avgKStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("K"))
+        case .avgDLStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("DL"))
+        case .avgLBStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("LB"))
+        case .avgDBStartersPerWeek: return avgStarter(team, PositionNormalizer.normalize("DB"))
         case .waiverMovesSeason: return team.waiverMoves ?? 0
         case .faabSpentSeason: return team.faabSpent ?? 0
         case .tradesCompletedSeason: return team.tradesCompleted ?? 0
@@ -148,6 +152,7 @@ final class DSDStatsService {
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
         let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
+        // --- PATCH: Normalize positions when summing points across roster ---
         return team.roster
             .flatMap { $0.weeklyScores }
             .filter { validWeeks.contains($0.week) }
@@ -207,31 +212,31 @@ final class DSDStatsService {
         case .defensiveManagementPercent: return agg.defensiveManagementPercent
         case .averageDefensivePPW: return agg.defensivePPW
         case .bestDefensivePositionPPW, .worstDefensivePositionPointsAgainstPPW: return nil
-        case .qbPositionPPW: return agg.positionAvgPPW["QB"]
-        case .rbPositionPPW: return agg.positionAvgPPW["RB"]
-        case .wrPositionPPW: return agg.positionAvgPPW["WR"]
-        case .tePositionPPW: return agg.positionAvgPPW["TE"]
-        case .kickerPPW: return agg.positionAvgPPW["K"]
-        case .dlPositionPPW: return agg.positionAvgPPW["DL"]
-        case .lbPositionPPW: return agg.positionAvgPPW["LB"]
-        case .dbPositionPPW: return agg.positionAvgPPW["DB"]
-        case .individualQBPPW: return agg.individualPositionPPW["QB"]
-        case .individualRBPPW: return agg.individualPositionPPW["RB"]
-        case .individualWRPPW: return agg.individualPositionPPW["WR"]
-        case .individualTEPPW: return agg.individualPositionPPW["TE"]
-        case .individualKickerPPW: return agg.individualPositionPPW["K"]
-        case .individualDLPPW: return agg.individualPositionPPW["DL"]
-        case .individualLBPPW: return agg.individualPositionPPW["LB"]
-        case .individualDBPPW: return agg.individualPositionPPW["DB"]
+        case .qbPositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("QB")]
+        case .rbPositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("RB")]
+        case .wrPositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("WR")]
+        case .tePositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("TE")]
+        case .kickerPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("K")]
+        case .dlPositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("DL")]
+        case .lbPositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("LB")]
+        case .dbPositionPPW: return agg.positionAvgPPW[PositionNormalizer.normalize("DB")]
+        case .individualQBPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("QB")]
+        case .individualRBPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("RB")]
+        case .individualWRPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("WR")]
+        case .individualTEPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("TE")]
+        case .individualKickerPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("K")]
+        case .individualDLPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("DL")]
+        case .individualLBPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("LB")]
+        case .individualDBPPW: return agg.individualPositionPPW[PositionNormalizer.normalize("DB")]
         case .offensiveStrengths, .offensiveWeaknesses, .defensiveStrengths, .defensiveWeaknesses: return nil
-        case .avgQBStartersPerWeek: return avgStarterAllTime(agg, "QB")
-        case .avgRBStartersPerWeek: return avgStarterAllTime(agg, "RB")
-        case .avgWRStartersPerWeek: return avgStarterAllTime(agg, "WR")
-        case .avgTEStartersPerWeek: return avgStarterAllTime(agg, "TE")
-        case .avgKStartersPerWeek: return avgStarterAllTime(agg, "K")
-        case .avgDLStartersPerWeek: return avgStarterAllTime(agg, "DL")
-        case .avgLBStartersPerWeek: return avgStarterAllTime(agg, "LB")
-        case .avgDBStartersPerWeek: return avgStarterAllTime(agg, "DB")
+        case .avgQBStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("QB"))
+        case .avgRBStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("RB"))
+        case .avgWRStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("WR"))
+        case .avgTEStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("TE"))
+        case .avgKStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("K"))
+        case .avgDLStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("DL"))
+        case .avgLBStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("LB"))
+        case .avgDBStartersPerWeek: return avgStarterAllTime(agg, PositionNormalizer.normalize("DB"))
         case .waiverMovesAllTime: return agg.totalWaiverMoves
         case .faabSpentAllTime: return agg.totalFAABSpent
         case .faabAvgPerMoveAllTime:
@@ -290,31 +295,39 @@ final class DSDStatsService {
     private func bestOffPos(_ team: TeamStanding) -> (String, Double)? {
         guard let dict = team.positionAverages else { return nil }
         let off: Set<String> = ["QB","RB","WR","TE","K"]
-        return dict.filter { off.contains($0.key) }.max { $0.value < $1.value }
+        // --- PATCH: Use normalized keys for comparison ---
+        let normDict = Dictionary(uniqueKeysWithValues: dict.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        return normDict.filter { off.contains($0.key) }.max { $0.value < $1.value }
     }
     private func worstOffPos(_ team: TeamStanding) -> (String, Double)? {
         guard let dict = team.positionAverages else { return nil }
         let off: Set<String> = ["QB","RB","WR","TE","K"]
-        return dict.filter { off.contains($0.key) }.min { $0.value < $1.value }
+        let normDict = Dictionary(uniqueKeysWithValues: dict.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        return normDict.filter { off.contains($0.key) }.min { $0.value < $1.value }
     }
     private func bestDefPos(_ team: TeamStanding) -> (String, Double)? {
         guard let dict = team.positionAverages else { return nil }
         let def: Set<String> = ["DL","LB","DB"]
-        return dict.filter { def.contains($0.key) }.max { $0.value < $1.value }
+        let normDict = Dictionary(uniqueKeysWithValues: dict.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        return normDict.filter { def.contains($0.key) }.max { $0.value < $1.value }
     }
     private func worstDefPos(_ team: TeamStanding) -> (String, Double)? {
         guard let dict = team.positionAverages else { return nil }
         let def: Set<String> = ["DL","LB","DB"]
-        return dict.filter { def.contains($0.key) }.min { $0.value < $1.value }
+        let normDict = Dictionary(uniqueKeysWithValues: dict.map { (PositionNormalizer.normalize($0.key), $0.value) })
+        return normDict.filter { def.contains($0.key) }.min { $0.value < $1.value }
     }
     private func avgStarter(_ team: TeamStanding, _ pos: String) -> Double {
         guard let counts = team.actualStarterPositionCounts,
               let weeks = team.actualStarterWeeks, weeks > 0 else { return 0 }
-        return Double(counts[pos] ?? 0) / Double(weeks)
+        // --- PATCH: Use normalized key for lookup ---
+        let normPos = PositionNormalizer.normalize(pos)
+        return Double(counts[normPos] ?? 0) / Double(weeks)
     }
     private func avgStarterAllTime(_ agg: AggregatedOwnerStats, _ pos: String) -> Double {
         guard agg.actualStarterWeeks > 0 else { return 0 }
-        return Double(agg.actualStarterPositionCountsTotals[pos] ?? 0) / Double(agg.actualStarterWeeks)
+        let normPos = PositionNormalizer.normalize(pos)
+        return Double(agg.actualStarterPositionCountsTotals[normPos] ?? 0) / Double(agg.actualStarterWeeks)
     }
     
     func playoffStats(for team: TeamStanding) -> PlayoffStats? {

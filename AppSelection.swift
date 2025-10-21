@@ -76,19 +76,19 @@ final class AppSelection: ObservableObject {
         // OwnerId-aware team selection logic
         if let sleeperId = sleeperUserId,
            let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
-           let userTeam = latestSeason.teams.first(where: { $0.ownerId == sleeperId }) {
-            selectedTeamId = userTeam.id
-            userTeam = userTeam.name
+           let foundTeam = latestSeason.teams.first(where: { $0.ownerId == sleeperId }) {
+            selectedTeamId = foundTeam.id
+            self.userTeam = foundTeam.name
         } else if let username = username,
                   let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
                   let teamByName = latestSeason.teams.first(where: { $0.name == username }) {
             selectedTeamId = teamByName.id
-            userTeam = teamByName.name
+            self.userTeam = teamByName.name
         } else {
             // Fallback: select first team in latest season
             let firstTeam = league.seasons.sorted(by: { $0.id < $1.id }).last?.teams.first
             selectedTeamId = firstTeam?.id
-            userTeam = firstTeam?.name ?? ""
+            self.userTeam = firstTeam?.name ?? ""
         }
 
         if let user = username {

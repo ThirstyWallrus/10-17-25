@@ -10,6 +10,9 @@
 
 import SwiftUI
 
+// Import PositionNormalizer for global normalization
+import Foundation
+
 struct DSDDashboard: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var appSelection: AppSelection
@@ -214,11 +217,16 @@ struct DSDDashboard: View {
         .pointsScoredAgainstStanding, .averagePointsScoredAgainstPerWeekStanding
     ]
    
-    // Position tokens
+    // Position tokens (normalize keys for DL, LB, DB)
     let positionColors: [String: Color] = [
-        "QB": .red, "RB": .green, "WR": .blue, "TE": .yellow,
-        "K": Color(red: 0.75, green: 0.6, blue: 1.0),
-        "DL": .orange, "LB": .purple, "DB": .pink
+        PositionNormalizer.normalize("QB"): .red,
+        PositionNormalizer.normalize("RB"): .green,
+        PositionNormalizer.normalize("WR"): .blue,
+        PositionNormalizer.normalize("TE"): .yellow,
+        PositionNormalizer.normalize("K"): Color(red: 0.75, green: 0.6, blue: 1.0),
+        PositionNormalizer.normalize("DL"): .orange,
+        PositionNormalizer.normalize("LB"): .purple,
+        PositionNormalizer.normalize("DB"): .pink
     ]
    
     var body: some View {
@@ -863,7 +871,8 @@ struct DSDDashboard: View {
     private func categoryColor(for category: Category) -> Color {
         let abbr = category.abbreviation
         let token = abbr.split(separator: " ").first.map(String.init) ?? abbr
-        return positionColors[token] ?? .orange
+        // Use normalized token for DL, LB, DB
+        return positionColors[PositionNormalizer.normalize(token)] ?? .orange
     }
     private func valueForStandingCategory(_ category: Category, team: TeamStanding) -> String {
         if isAllTimeMode, let agg = aggregatedOwner(for: team) {
@@ -877,22 +886,22 @@ struct DSDDashboard: View {
             case .defensiveManagementPercentStanding: return String(format: "%.1f%%", agg.defensiveManagementPercent)
             case .offensiveStanding: return formatNumber(agg.totalOffensivePointsFor, decimals: 2)
             case .defensiveStanding: return formatNumber(agg.totalDefensivePointsFor, decimals: 2)
-            case .qbPPWStanding: return ppwString(agg.positionAvgPPW["QB"])
-            case .rbPPWStanding: return ppwString(agg.positionAvgPPW["RB"])
-            case .wrPPWStanding: return ppwString(agg.positionAvgPPW["WR"])
-            case .tePPWStanding: return ppwString(agg.positionAvgPPW["TE"])
-            case .kickerPPWStanding: return ppwString(agg.positionAvgPPW["K"])
-            case .dlPPWStanding: return ppwString(agg.positionAvgPPW["DL"])
-            case .lbPPWStanding: return ppwString(agg.positionAvgPPW["LB"])
-            case .dbPPWStanding: return ppwString(agg.positionAvgPPW["DB"])
-            case .individualQBPPWStanding: return ppwString(agg.individualPositionPPW["QB"])
-            case .individualRBPPWStanding: return ppwString(agg.individualPositionPPW["RB"])
-            case .individualWRPPWStanding: return ppwString(agg.individualPositionPPW["WR"])
-            case .individualTEPPWStanding: return ppwString(agg.individualPositionPPW["TE"])
-            case .individualKickerPPWStanding: return ppwString(agg.individualPositionPPW["K"])
-            case .individualDLPPWStanding: return ppwString(agg.individualPositionPPW["DL"])
-            case .individualLBPPWStanding: return ppwString(agg.individualPositionPPW["LB"])
-            case .individualDBPPWStanding: return ppwString(agg.individualPositionPPW["DB"])
+            case .qbPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("QB")])
+            case .rbPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("RB")])
+            case .wrPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("WR")])
+            case .tePPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("TE")])
+            case .kickerPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("K")])
+            case .dlPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("DL")])
+            case .lbPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("LB")])
+            case .dbPPWStanding: return ppwString(agg.positionAvgPPW[PositionNormalizer.normalize("DB")])
+            case .individualQBPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("QB")])
+            case .individualRBPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("RB")])
+            case .individualWRPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("WR")])
+            case .individualTEPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("TE")])
+            case .individualKickerPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("K")])
+            case .individualDLPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("DL")])
+            case .individualLBPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("LB")])
+            case .individualDBPPWStanding: return ppwString(agg.individualPositionPPW[PositionNormalizer.normalize("DB")])
             default: break
             }
         }
@@ -912,22 +921,22 @@ struct DSDDashboard: View {
             return String(format: "%.1f%%", val)
         case .offensiveStanding: return formatNumber(team.offensivePointsFor ?? 0, decimals: 2)
         case .defensiveStanding: return formatNumber(team.defensivePointsFor ?? 0, decimals: 2)
-        case .qbPPWStanding: return formatPosAvg(team, key: .qbPositionPPW)
-        case .rbPPWStanding: return formatPosAvg(team, key: .rbPositionPPW)
-        case .wrPPWStanding: return formatPosAvg(team, key: .wrPositionPPW)
-        case .tePPWStanding: return formatPosAvg(team, key: .tePositionPPW)
-        case .kickerPPWStanding: return formatPosAvg(team, key: .kickerPPW)
-        case .dlPPWStanding: return formatPosAvg(team, key: .dlPositionPPW)
-        case .lbPPWStanding: return formatPosAvg(team, key: .lbPositionPPW)
-        case .dbPPWStanding: return formatPosAvg(team, key: .dbPositionPPW)
-        case .individualQBPPWStanding: return formatIndAvg(team, key: .individualQBPPW)
-        case .individualRBPPWStanding: return formatIndAvg(team, key: .individualRBPPW)
-        case .individualWRPPWStanding: return formatIndAvg(team, key: .individualWRPPW)
-        case .individualTEPPWStanding: return formatIndAvg(team, key: .individualTEPPW)
-        case .individualKickerPPWStanding: return formatIndAvg(team, key: .individualKickerPPW)
-        case .individualDLPPWStanding: return formatIndAvg(team, key: .individualDLPPW)
-        case .individualLBPPWStanding: return formatIndAvg(team, key: .individualLBPPW)
-        case .individualDBPPWStanding: return formatIndAvg(team, key: .individualDBPPW)
+        case .qbPPWStanding: return formatPosAvg(team, key: .qbPositionPPW, normalizedKey: PositionNormalizer.normalize("QB"))
+        case .rbPPWStanding: return formatPosAvg(team, key: .rbPositionPPW, normalizedKey: PositionNormalizer.normalize("RB"))
+        case .wrPPWStanding: return formatPosAvg(team, key: .wrPositionPPW, normalizedKey: PositionNormalizer.normalize("WR"))
+        case .tePPWStanding: return formatPosAvg(team, key: .tePositionPPW, normalizedKey: PositionNormalizer.normalize("TE"))
+        case .kickerPPWStanding: return formatPosAvg(team, key: .kickerPPW, normalizedKey: PositionNormalizer.normalize("K"))
+        case .dlPPWStanding: return formatPosAvg(team, key: .dlPositionPPW, normalizedKey: PositionNormalizer.normalize("DL"))
+        case .lbPPWStanding: return formatPosAvg(team, key: .lbPositionPPW, normalizedKey: PositionNormalizer.normalize("LB"))
+        case .dbPPWStanding: return formatPosAvg(team, key: .dbPositionPPW, normalizedKey: PositionNormalizer.normalize("DB"))
+        case .individualQBPPWStanding: return formatIndAvg(team, key: .individualQBPPW, normalizedKey: PositionNormalizer.normalize("QB"))
+        case .individualRBPPWStanding: return formatIndAvg(team, key: .individualRBPPW, normalizedKey: PositionNormalizer.normalize("RB"))
+        case .individualWRPPWStanding: return formatIndAvg(team, key: .individualWRPPW, normalizedKey: PositionNormalizer.normalize("WR"))
+        case .individualTEPPWStanding: return formatIndAvg(team, key: .individualTEPPW, normalizedKey: PositionNormalizer.normalize("TE"))
+        case .individualKickerPPWStanding: return formatIndAvg(team, key: .individualKickerPPW, normalizedKey: PositionNormalizer.normalize("K"))
+        case .individualDLPPWStanding: return formatIndAvg(team, key: .individualDLPPW, normalizedKey: PositionNormalizer.normalize("DL"))
+        case .individualLBPPWStanding: return formatIndAvg(team, key: .individualLBPPW, normalizedKey: PositionNormalizer.normalize("LB"))
+        case .individualDBPPWStanding: return formatIndAvg(team, key: .individualDBPPW, normalizedKey: PositionNormalizer.normalize("DB"))
         default: return "—"
         }
     }
@@ -938,14 +947,46 @@ struct DSDDashboard: View {
         guard let v = v else { return "—" }
         return String(format: "%.2f", v)
     }
-    private func formatPosAvg(_ team: TeamStanding, key: DSDStatsService.StatType) -> String {
+    private func formatPosAvg(_ team: TeamStanding, key: DSDStatsService.StatType, normalizedKey: String? = nil) -> String {
+        let posKey = normalizedKey ?? {
+            switch key {
+            case .qbPositionPPW: return PositionNormalizer.normalize("QB")
+            case .rbPositionPPW: return PositionNormalizer.normalize("RB")
+            case .wrPositionPPW: return PositionNormalizer.normalize("WR")
+            case .tePositionPPW: return PositionNormalizer.normalize("TE")
+            case .kickerPPW: return PositionNormalizer.normalize("K")
+            case .dlPositionPPW: return PositionNormalizer.normalize("DL")
+            case .lbPositionPPW: return PositionNormalizer.normalize("LB")
+            case .dbPositionPPW: return PositionNormalizer.normalize("DB")
+            default: return ""
+            }
+        }()
+        if let dict = team.positionAverages, let raw = dict[posKey] {
+            return String(format: "%.2f", raw)
+        }
         if let raw = DSDStatsService.shared.stat(for: team, type: key) as? Double {
             return String(format: "%.2f", raw)
         }
         return "—"
     }
 
-    private func formatIndAvg(_ team: TeamStanding, key: DSDStatsService.StatType) -> String {
+    private func formatIndAvg(_ team: TeamStanding, key: DSDStatsService.StatType, normalizedKey: String? = nil) -> String {
+        let posKey = normalizedKey ?? {
+            switch key {
+            case .individualQBPPW: return PositionNormalizer.normalize("QB")
+            case .individualRBPPW: return PositionNormalizer.normalize("RB")
+            case .individualWRPPW: return PositionNormalizer.normalize("WR")
+            case .individualTEPPW: return PositionNormalizer.normalize("TE")
+            case .individualKickerPPW: return PositionNormalizer.normalize("K")
+            case .individualDLPPW: return PositionNormalizer.normalize("DL")
+            case .individualLBPPW: return PositionNormalizer.normalize("LB")
+            case .individualDBPPW: return PositionNormalizer.normalize("DB")
+            default: return ""
+            }
+        }()
+        if let dict = team.individualPositionAverages, let raw = dict[posKey] {
+            return String(format: "%.2f", raw)
+        }
         if let raw = DSDStatsService.shared.stat(for: team, type: key) as? Double {
             return String(format: "%.2f", raw)
         }
@@ -1003,7 +1044,7 @@ struct DSDDashboard: View {
     private func coloredStatName(_ category: Category) -> AnyView {
         let abbr = category.abbreviation
         let token = abbr.split(separator: " ").first.map(String.init) ?? abbr
-        let color = positionColors[token] ?? .white
+        let color = positionColors[PositionNormalizer.normalize(token)] ?? .white
         return AnyView(
             Text(abbr)
                 .foregroundColor(color)
@@ -1027,7 +1068,7 @@ struct DSDDashboard: View {
         case .individualRBPPWStanding: return .individualRBPPW
         case .wrPPWStanding: return .wrPositionPPW
         case .individualWRPPWStanding: return .individualWRPPW
-        case .tePPWStanding: return .tePositionPPW
+        case .tePositionPPW, .tePPWStanding: return .tePositionPPW
         case .individualTEPPWStanding: return .individualTEPPW
         case .kickerPPWStanding: return .kickerPPW
         case .individualKickerPPWStanding: return .individualKickerPPW
@@ -1151,22 +1192,22 @@ struct DSDDashboard: View {
                 case .defensiveManagementPercentStanding: return agg.defensiveManagementPercent
                 case .offensiveStanding: return agg.totalOffensivePointsFor
                 case .defensiveStanding: return agg.totalDefensivePointsFor
-                case .qbPPWStanding: return agg.positionAvgPPW["QB"] ?? 0
-                case .rbPPWStanding: return agg.positionAvgPPW["RB"] ?? 0
-                case .wrPPWStanding: return agg.positionAvgPPW["WR"] ?? 0
-                case .tePPWStanding: return agg.positionAvgPPW["TE"] ?? 0
-                case .kickerPPWStanding: return agg.positionAvgPPW["K"] ?? 0
-                case .dlPPWStanding: return agg.positionAvgPPW["DL"] ?? 0
-                case .lbPPWStanding: return agg.positionAvgPPW["LB"] ?? 0
-                case .dbPPWStanding: return agg.positionAvgPPW["DB"] ?? 0
-                case .individualQBPPWStanding: return agg.individualPositionPPW["QB"] ?? 0
-                case .individualRBPPWStanding: return agg.individualPositionPPW["RB"] ?? 0
-                case .individualWRPPWStanding: return agg.individualPositionPPW["WR"] ?? 0
-                case .individualTEPPWStanding: return agg.individualPositionPPW["TE"] ?? 0
-                case .individualKickerPPWStanding: return agg.individualPositionPPW["K"] ?? 0
-                case .individualDLPPWStanding: return agg.individualPositionPPW["DL"] ?? 0
-                case .individualLBPPWStanding: return agg.individualPositionPPW["LB"] ?? 0
-                case .individualDBPPWStanding: return agg.individualPositionPPW["DB"] ?? 0
+                case .qbPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("QB")] ?? 0
+                case .rbPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("RB")] ?? 0
+                case .wrPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("WR")] ?? 0
+                case .tePPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("TE")] ?? 0
+                case .kickerPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("K")] ?? 0
+                case .dlPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("DL")] ?? 0
+                case .lbPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("LB")] ?? 0
+                case .dbPPWStanding: return agg.positionAvgPPW[PositionNormalizer.normalize("DB")] ?? 0
+                case .individualQBPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("QB")] ?? 0
+                case .individualRBPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("RB")] ?? 0
+                case .individualWRPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("WR")] ?? 0
+                case .individualTEPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("TE")] ?? 0
+                case .individualKickerPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("K")] ?? 0
+                case .individualDLPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("DL")] ?? 0
+                case .individualLBPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("LB")] ?? 0
+                case .individualDBPPWStanding: return agg.individualPositionPPW[PositionNormalizer.normalize("DB")] ?? 0
                 default: return 0
                 }
             }
