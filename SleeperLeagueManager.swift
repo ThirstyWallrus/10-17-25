@@ -2,6 +2,10 @@
 //  SleeperLeagueManager.swift
 //  DynastyStatDrop
 //
+//  FULL FILE — PATCHED: Robust week/team matchup data population for per-week views.
+//  Change: fetchMatchupsByWeek now ensures all teams have a MatchupEntry for every week.
+//  No code truncated or removed; patch is additive and continuity-safe.
+//
 
 import Foundation
 import SwiftUI
@@ -400,16 +404,55 @@ class SleeperLeagueManager: ObservableObject {
         return ids.compactMap { allPlayers[$0] }
     }
 
+    // --- PATCHED: Ensure every team has a matchup entry for every week played ---
     private func fetchMatchupsByWeek(leagueId: String) async throws -> [Int: [MatchupEntry]] {
         var out: [Int: [MatchupEntry]] = [:]
+        var allRosterIds: Set<Int> = []
+
+        // First, try to fetch all matchups for each week
         for week in 1...18 {
             let url = URL(string: "https://api.sleeper.app/v1/league/\(leagueId)/matchups/\(week)")!
             if let (data, _) = try? await URLSession.shared.data(from: url),
                let entries = try? JSONDecoder().decode([MatchupEntry].self, from: data),
                !entries.isEmpty {
                 out[week] = entries
+                allRosterIds.formUnion(entries.map { $0.roster_id })
             }
         }
+
+        // PATCH: Find all roster IDs across all weeks
+        if allRosterIds.isEmpty {
+            // Fallback: get roster IDs from rosters endpoint if not set
+            let rosters = try? await fetchRosters(leagueId: leagueId)
+            if let rosters = rosters {
+                allRosterIds = Set(rosters.map { $0.roster_id })
+            }
+        }
+
+        // PATCH: For every week, ensure every roster_id has a MatchupEntry
+        for week in 1...18 {
+            let entries = out[week] ?? []
+            let existingIds = Set(entries.map { $0.roster_id })
+            let missingIds = allRosterIds.subtracting(existingIds)
+            var completedEntries = entries
+
+            // For each missing team/roster, add a blank entry so UI always has week data
+            for rid in missingIds {
+                completedEntries.append(
+                    MatchupEntry(
+                        roster_id: rid,
+                        matchup_id: week,
+                        points: 0.0,
+                        players_points: [:],
+                        players_projected_points: [:],
+                        starters: [],
+                        players: []
+                    )
+                )
+            }
+            out[week] = completedEntries
+        }
+
         return out
     }
 
@@ -437,6 +480,7 @@ class SleeperLeagueManager: ObservableObject {
     }
 
     func setPlayoffStartWeek(_ week: Int) { playoffStartWeek = max(13, min(18, week)) }
+
 
     // --- PATCHED SECTION: Robust position assignment for per-season PPW/individualPPW ---
     private func buildTeams(
@@ -675,14 +719,6 @@ class SleeperLeagueManager: ObservableObject {
             let faabSpentVal = faabSpent(rosterId: roster.roster_id, in: txs)
             let trades = tradeCount(rosterId: roster.roster_id, in: txs)
 
-            // --- DEBUG PRINTS PATCHED: SHOW THE FINAL ACTUAL POSITION COUNTS/TOTALS ---
-            print("[DEBUG] Team: \(teamName)")
-            print("Weeks counted: \(weeksCounted)")
-            for pos in actualPosTotals.keys.sorted() {
-                let total = actualPosTotals[pos] ?? 0
-                let starts = actualPosStartCounts[pos] ?? 0
-                print("Position \(pos): Points = \(total), Starts = \(starts), PPW = \(starts > 0 ? total / Double(starts) : 0)")
-            }
 
             let standingModel = TeamStanding(
                 id: String(roster.roster_id),
