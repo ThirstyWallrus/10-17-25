@@ -133,8 +133,57 @@ struct MyLeagueView: View {
             }
         }
     }
+
+    /// --- DEBUG PATCH: Print underlying matchup entry and starter points for the selected week/team ---
+    private func debugPrintMatchupEntry(team: TeamStanding, week: Int, context: LeagueContext) {
+        guard let league = league,
+              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) })
+        else {
+            print("[DEBUG][MyLeagueView] No matchup entry found for team \(team.name) (id: \(team.id)) in week \(week)")
+            return
+        }
+        print("[DEBUG][MyLeagueView] --- MatchupEntry for Team \(team.name) (id: \(team.id)) Week \(week) ---")
+        print("roster_id: \(myEntry.roster_id), matchup_id: \(myEntry.matchup_id ?? -1), points: \(myEntry.points ?? -1)")
+        print("starters: \(myEntry.starters ?? [])")
+        print("players_points: \(myEntry.players_points ?? [:])")
+        print("players: \(myEntry.players ?? [])")
+        // Print starter points breakdown
+        let allPlayers = leagueManager.playerCache ?? [:]
+        if let starters = myEntry.starters, let playersPoints = myEntry.players_points {
+            print("[DEBUG][MyLeagueView] Starter Slot Breakdown:")
+            for pid in starters {
+                let player = team.roster.first(where: { $0.id == pid }) ??
+                    allPlayers[pid].map { raw in
+                        Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                    }
+                let pos = PositionNormalizer.normalize(player?.position ?? "UNK")
+                let pts = playersPoints[pid] ?? 0
+                print("    Starter: \(pid) | Pos: \(pos) | Points: \(pts)")
+            }
+            let total = starters.reduce(0.0) { $0 + (playersPoints[$1] ?? 0) }
+            print("[DEBUG][MyLeagueView] Total Starter Points: \(total)")
+        }
+        // Print all players with points for this week
+        if let players = myEntry.players, let playersPoints = myEntry.players_points {
+            print("[DEBUG][MyLeagueView] All Player Points (from players pool):")
+            for pid in players {
+                let player = team.roster.first(where: { $0.id == pid }) ??
+                    allPlayers[pid].map { raw in
+                        Player(id: pid, position: raw.position ?? "UNK", altPositions: raw.fantasy_positions, weeklyScores: [])
+                    }
+                let pos = PositionNormalizer.normalize(player?.position ?? "UNK")
+                let pts = playersPoints[pid] ?? 0
+                print("    Player: \(pid) | Pos: \(pos) | Points: \(pts)")
+            }
+        }
+        print("[DEBUG][MyLeagueView] --- End of MatchupEntry Debug ---")
+    }
+
     // Week stat/grade helpers
     private func statForWeek(team: TeamStanding, week: Int, context: LeagueContext) -> Double {
+        // --- DEBUG PATCH: Print matchup entry and points for this team/week ---
+        debugPrintMatchupEntry(team: team, week: week, context: context)
         guard let league = league,
               let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),

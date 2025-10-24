@@ -1,10 +1,3 @@
-//
-//  PositionNormalizer.swift
-//  DynastyStatDrop
-//
-//  Created by Dynasty Stat Drop on 10/20/25.
-//
-
 
 //
 //  PositionNormalizer.swift

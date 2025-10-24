@@ -5,6 +5,7 @@
 //  Aggregates multi-season stats per current franchise (ownerId).
 //
 //  **PATCHED**: All defensive position usages now pass through PositionNormalizer.normalize(_).
+//  **UPDATED**: Uses SlotPositionAssigner.countedPosition for slot-to-position assignment.
 //
 
 import Foundation
@@ -143,17 +144,15 @@ struct AllTimeAggregator {
                 actualWeeks += weeks
             }
 
-            // ---------- UPDATED SECTION: Defensive aggregation of weeks ----------
+            // Defensive filtering: exclude current week ONLY IF more than one week is present
             let matchupsByWeek = season.matchupsByWeek ?? [:]
             let rosterId = Int(team.id) ?? -1
 
-            // Defensive filtering: exclude current week ONLY IF more than one week is present
             let allWeeks = matchupsByWeek.keys.sorted()
             var filteredWeeks = allWeeks
             if let currentWeek = allWeeks.max(), allWeeks.count > 1 {
                 filteredWeeks = allWeeks.filter { $0 != currentWeek }
             }
-            // If filtering would leave zero, revert to including all weeks
             if filteredWeeks.isEmpty {
                 filteredWeeks = allWeeks
             }
@@ -170,7 +169,8 @@ struct AllTimeAggregator {
                 var weekPF = 0.0
                 var weekOffPF = 0.0
                 var weekDefPF = 0.0
-                // --- PATCHED: Use credited position per slot assignment for all-time PPW/individualPPW ---
+
+                // --- PATCHED: Use SlotPositionAssigner.countedPosition for all-time PPW/individualPPW ---
                 let slots = expandSlots(lineupConfig: team.lineupConfig ?? [:])
                 let paddedStarters = {
                     if starters.count < slots.count {
@@ -184,29 +184,33 @@ struct AllTimeAggregator {
                 for idx in 0..<slots.count {
                     let pid = paddedStarters[idx]
                     guard pid != "0" else { continue }
-                    // --- FIX: Robust position lookup for every starter ---
+                    // --- PATCH: Use SlotPositionAssigner global helper for credited position ---
                     let creditedPosition: String = {
                         if let rawPlayer = playerCache[pid], let pos = rawPlayer.position {
-                            return countedPosition(
+                            return SlotPositionAssigner.countedPosition(
                                 for: slots[idx],
                                 candidatePositions: [PositionNormalizer.normalize(pos)] + (rawPlayer.fantasy_positions?.map { PositionNormalizer.normalize($0) } ?? []),
                                 base: PositionNormalizer.normalize(pos)
                             )
                         }
-                        // fallback: check in team's current roster
                         if let teamPlayer = team.roster.first(where: { $0.id == pid }) {
-                            return countedPosition(
+                            return SlotPositionAssigner.countedPosition(
                                 for: slots[idx],
                                 candidatePositions: [PositionNormalizer.normalize(teamPlayer.position)] + (teamPlayer.altPositions?.map { PositionNormalizer.normalize($0) } ?? []),
                                 base: PositionNormalizer.normalize(teamPlayer.position)
                             )
                         }
                         // fallback: use slot as credited position
-                        return PositionNormalizer.normalize(slots[idx])
+                        return SlotPositionAssigner.countedPosition(
+                            for: slots[idx],
+                            candidatePositions: [],
+                            base: PositionNormalizer.normalize(slots[idx])
+                        )
                     }()
                     let point = entry.players_points?[pid] ?? 0.0
                     posTotals[creditedPosition, default: 0.0] += point
                     posStarts[creditedPosition, default: 0] += 1
+
                     // For overall offense/defense, use normalized base pos if available
                     let basePos: String = {
                         if let rawPlayer = playerCache[pid], let pos = rawPlayer.position { return PositionNormalizer.normalize(pos) }
@@ -242,11 +246,9 @@ struct AllTimeAggregator {
                     else { ties += 1 }
                 }
             }
-            // ---------- END UPDATED SECTION ----------
         }
 
         let weeksPlayed = distinctWeeks.count
-        
 
         // Derived
         let mgmtPct = totalMaxPF > 0 ? totalPF / totalMaxPF * 100 : 0
@@ -304,37 +306,13 @@ struct AllTimeAggregator {
         )
     }
 
-    /// Returns credited position for a starter: If strict slot, use slot. Otherwise, use first eligible position for flexes.
-    private static func countedPosition(for slot: String, candidatePositions: [String], base: String) -> String {
-        // PATCH: Always normalize candidate positions and base for defensive slots
-        let s = slot.uppercased()
-        let strict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
-        let offensiveFlexes: Set<String> = [
-            "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE","WRRBTEFLEX"
-        ]
-        let idpFlexes: Set<String> = [
-            "IDPFLEX","IDP_FLEX","DFLEX","DL_LB_DB","DL_LB","LB_DB","DL_DB","DP","D","DEF"
-        ]
-        if strict.contains(s) {
-            // Player is credited as the slot they were started in
-            return s
-        }
-        if offensiveFlexes.contains(s) {
-            // Credit as first eligible position (e.g., LB/DL in FLEX -> "LB")
-            return candidatePositions.first ?? base
-        }
-        if idpFlexes.contains(s) || s.contains("IDP") {
-            // Credit as first eligible position for IDP flexes
-            return candidatePositions.first ?? base
-        }
-        // Fallback
-        return candidatePositions.first ?? base
-    }
-
     /// Expands a lineupConfig to array of slot names in order
     private static func expandSlots(lineupConfig: [String: Int]) -> [String] {
         lineupConfig.flatMap { Array(repeating: $0.key, count: $0.value) }
     }
+
+    // PATCHED: Replace local countedPosition with SlotPositionAssigner global helper
+    // **Local countedPosition logic removed in favor of SlotPositionAssigner**
 
     private static func maxPointsForWeek(team: TeamStanding, week: Int) -> (total: Double, off: Double, def: Double) {
         let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
@@ -464,34 +442,6 @@ struct AllTimeAggregator {
         return total
     }
 
-    // MARK: Sum Functions
-
-    private static func sumMaxPointsForWeeks(team: TeamStanding, weeks: Set<Int>) -> Double {
-        weeks.reduce(0.0) { $0 + maxPointsForWeek(team: team, week: $1).total }
-    }
-
-    private static func sumMaxOffensivePointsForWeeks(team: TeamStanding, weeks: Set<Int>) -> Double {
-        weeks.reduce(0.0) { $0 + maxPointsForWeek(team: team, week: $1).off }
-    }
-
-    private static func sumMaxDefensivePointsForWeeks(team: TeamStanding, weeks: Set<Int>) -> Double {
-        weeks.reduce(0.0) { $0 + maxPointsForWeek(team: team, week: $1).def }
-    }
-
-    private static func sumActualOffensivePointsForWeeks(team: TeamStanding, weeks: Set<Int>) -> Double {
-        weeks.reduce(0.0) { $0 + actualPointsForWeek(team: team, week: $1, positions: offensivePositions) }
-    }
-
-    private static func sumActualDefensivePointsForWeeks(team: TeamStanding, weeks: Set<Int>) -> Double {
-        weeks.reduce(0.0) { $0 + actualPointsForWeek(team: team, week: $1, positions: defensivePositions) }
-    }
-
-    private static func sumPointsAgainstForWeeks(team: TeamStanding, weeks: Set<Int>) -> Double {
-        // If per-week points against is available, sum it; otherwise fallback to total (but adjust for weeks)
-        // For playoffs, accumulate per matchup as done in aggregatePlayoffStats.
-        return 0.0 // Implement if needed for regular season PSA per weeks
-    }
-
     // MARK: Playoff Stats Aggregation
 
     private static func aggregatePlayoffStats(ownerId: String, allPlayoffMatchups: [SleeperMatchup], league: LeagueData, playerCache: [String: RawSleeperPlayer]) -> PlayoffStats {
@@ -514,15 +464,21 @@ struct AllTimeAggregator {
             var weekPF = 0.0
             var weekOffPF = 0.0
             var weekDefPF = 0.0
-            for starterId in starters {
+            for (idx, starterId) in starters.enumerated() {
                 guard let point = myEntry.players_points?[starterId],
                       let rawPlayer = playerCache[starterId],
                       let posRaw = rawPlayer.position else { continue }
-                let pos = PositionNormalizer.normalize(posRaw)
+                // PATCH: Use SlotPositionAssigner for credited playoff position assignment
+                let slots = expandSlots(lineupConfig: ownerTeam.lineupConfig ?? [:])
+                let creditedPos = SlotPositionAssigner.countedPosition(
+                    for: slots[safe: idx] ?? posRaw,
+                    candidatePositions: [PositionNormalizer.normalize(posRaw)] + (rawPlayer.fantasy_positions?.map { PositionNormalizer.normalize($0) } ?? []),
+                    base: PositionNormalizer.normalize(posRaw)
+                )
                 weekPF += point
-                if offensivePositions.contains(pos) {
+                if offensivePositions.contains(PositionNormalizer.normalize(creditedPos)) {
                     weekOffPF += point
-                } else if defensivePositions.contains(pos) {
+                } else if defensivePositions.contains(PositionNormalizer.normalize(creditedPos)) {
                     weekDefPF += point
                 }
             }
@@ -629,7 +585,7 @@ func didOwnerLoseMatchup(ownerId: String, matchup: SleeperMatchup, season: Seaso
 
 extension Collection {
     subscript(safe at: Index) -> Element? {
-        indices.contains(at) ? self[at] : self[at]
+        indices.contains(at) ? self[at] : nil
     }
 }
 

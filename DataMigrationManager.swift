@@ -19,6 +19,8 @@ import Foundation
 
 // --- PATCH: Import PositionNormalizer globally
 import Foundation
+// --- PATCH: Import SlotPositionAssigner for global slot assignment
+// import SlotPositionAssigner // Uncomment and ensure SlotPositionAssigner.swift is available in your target
 
 @MainActor
 final class DataMigrationManager: ObservableObject {
@@ -300,9 +302,13 @@ final class DataMigrationManager: ObservableObject {
                     }
                 }
                 
-                // PATCHED: Use slot assignment rules for duel-designated/flex positions
+                // PATCH: Use global SlotPositionAssigner for slot assignment
                 for (c, slot) in assignment {
-                    let counted = countedPosition(for: slot, candidatePositions: [c.basePos] + c.fantasy, base: c.basePos)
+                    let counted = SlotPositionAssigner.countedPosition(
+                        for: slot,
+                        candidatePositions: [c.basePos] + c.fantasy,
+                        base: c.basePos
+                    )
                     let normalized = PositionNormalizer.normalize(counted)
                     tempCounts[normalized, default: 0] += 1
                 }
@@ -394,6 +400,7 @@ final class DataMigrationManager: ObservableObject {
     }
 
     // PATCHED: Use slot assignment rules for duel-designated/flex positions
+    // NOTE: This local countedPosition is now deprecated for slot-to-position assignment, but left for continuity.
     private func countedPosition(for slot: String,
                                  candidatePositions: [String],
                                  base: String) -> String {

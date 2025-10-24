@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Foundation
 
 // MARK: - Data Models
 
@@ -146,7 +147,7 @@ class StatsViewModel: ObservableObject {
                 var posMap: [String: (score: Double, played: Int)] = [:]
                 
                 for (c, slot) in assignment {
-                    let counted = countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
+                    let counted = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
                     var current = posMap[counted, default: (0, 0)]
                     current.score += c.points
                     current.played += 1

@@ -13,6 +13,9 @@ import SwiftUI
 // MARK: - Import PositionNormalizer for canonical defensive position mapping
 import Foundation
 
+// --- PATCH: Import global SlotPositionAssigner for credited position assignment ---
+import SlotPositionAssigner
+
 // Ensure PositionNormalizer is available to all code in this file.
 import Foundation
 
@@ -585,14 +588,8 @@ class SleeperLeagueManager: ObservableObject {
                         let fantasyPositions = rawPlayer?.fantasy_positions ?? players.first(where: { $0.id == pid })?.altPositions ?? []
                         let candidatePositions = [pos] + fantasyPositions
 
-                        // Determine credited position for this slot/player
-                        let creditedPosition = PositionNormalizer.normalize(
-                            mappedPositionForStarter(
-                                slotName: slotType,
-                                playerPositions: candidatePositions,
-                                lineupConfig: lineupConfig
-                            )
-                        )
+                        // --- PATCH: Use global SlotPositionAssigner for credited position ---
+                        let creditedPosition = SlotPositionAssigner.countedPosition(for: slotType, candidatePositions: candidatePositions, base: pos)
                         let points = playersPoints[pid] ?? 0.0
                         actualPosStartCounts[creditedPosition, default: 0] += 1
                         actualPosTotals[creditedPosition, default: 0] += points
@@ -671,15 +668,13 @@ class SleeperLeagueManager: ObservableObject {
                     guard let best = pick else { continue }
                     used.insert(best.id)
                     weekMax += best.points
-                    let counted = PositionNormalizer.normalize(
-                        countedPosition(for: slot,
-                                        fantasy: best.fantasy,
-                                        base: best.basePos)
-                    )
-                    if offensivePositions.contains(counted) { weekOff += best.points }
-                    else if defensivePositions.contains(counted) { weekDef += best.points }
-                    posTotals[counted, default: 0] += best.points
-                    posStartCounts[counted, default: 0] += 1
+                    // --- PATCH: Use global SlotPositionAssigner for credited position ---
+                    let counted = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: best.fantasy, base: best.basePos)
+                    let credited = PositionNormalizer.normalize(counted)
+                    if offensivePositions.contains(credited) { weekOff += best.points }
+                    else if defensivePositions.contains(credited) { weekDef += best.points }
+                    posTotals[credited, default: 0] += best.points
+                    posStartCounts[credited, default: 0] += 1
                 }
 
                 maxTotal += weekMax
@@ -874,68 +869,9 @@ class SleeperLeagueManager: ObservableObject {
                (u.allSatisfy({ "DLB".contains($0) }) && u.count > 1)
     }
 
-    // --- PATCH: Normalize all positions before returning for stat aggregation
-    private func countedPosition(for slot: String, fantasy: [String], base: String) -> String {
-        let u = slot.uppercased()
-        if ["DL","LB","DB"].contains(u) { return u }
-        if isIDPFlex(u) || offensiveFlexSlots.contains(u) {
-            return fantasy.first ?? base
-        }
-        return base
-    }
+    // --- PATCH: Remove local countedPosition function, use global SlotPositionAssigner instead
 
-    // --- PATCH: Normalize all positions for slot mapping
-    private func mappedPositionForStarter(
-        slotName: String,
-        playerPositions: [String],
-        lineupConfig: [String: Int]
-    ) -> String {
-        let slot = slotName.uppercased()
-        let eligiblePositions = playerPositions.map { $0.uppercased() }
-
-        let strict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
-        if strict.contains(slot) {
-            return slot
-        }
-
-        let offensiveFlexes: Set<String> = [
-            "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE","WRRBTEFLEX"
-        ]
-        if offensiveFlexes.contains(slot) {
-            for pos in ["RB", "WR", "TE"] {
-                if eligiblePositions.contains(pos) {
-                    return pos
-                }
-            }
-            return eligiblePositions.first ?? slot
-        }
-
-        let superFlexes: Set<String> = [
-            "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX"
-        ]
-        if superFlexes.contains(slot) {
-            for pos in ["QB", "RB", "WR", "TE"] {
-                if eligiblePositions.contains(pos) {
-                    return pos
-                }
-            }
-            return eligiblePositions.first ?? slot
-        }
-
-        let idpFlexes: Set<String> = [
-            "IDPFLEX","IDP_FLEX","DFLEX","DL_LB_DB","DL_LB","LB_DB","DL_DB","DP","D","DEF"
-        ]
-        if idpFlexes.contains(slot) || slot.contains("IDP") {
-            for pos in ["DL", "LB", "DB"] {
-                if eligiblePositions.contains(pos) {
-                    return pos
-                }
-            }
-            return eligiblePositions.first ?? slot
-        }
-
-        return eligiblePositions.first ?? slot
-    }
+    // --- PATCH: Remove local mappedPositionForStarter, use SlotPositionAssigner if needed elsewhere ---
 
     private func baseLeagueName(_ name: String) -> String {
         let pattern = "[\\p{Emoji}\\p{Emoji_Presentation}\\p{Emoji_Modifier_Base}\\p{Emoji_Component}\\p{Symbol}\\p{Punctuation}]"

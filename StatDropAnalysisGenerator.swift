@@ -345,7 +345,7 @@ extension String {
                 used.insert(idx)
                 let c = candidates[idx]
                 totalMax += c.points
-                let counted = countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
+                let counted = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
                 if offensivePositions.contains(counted) {
                     offMax += c.points
                 } else if defensivePositions.contains(counted) {
