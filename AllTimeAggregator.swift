@@ -246,6 +246,7 @@ struct AllTimeAggregator {
         }
 
         let weeksPlayed = distinctWeeks.count
+        
 
         // Derived
         let mgmtPct = totalMaxPF > 0 ? totalPF / totalMaxPF * 100 : 0

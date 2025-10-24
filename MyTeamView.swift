@@ -873,13 +873,13 @@ struct MyTeamView: View {
 
     private func allowedPositions(for slot: String) -> Set<String> {
         switch slot.uppercased() {
-        case "QB","RB","WR","TE","K","DL","LB","DB": return [PositionNormalizer.normalize(slot)]
-        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return ["RB","WR","TE"].map(PositionNormalizer.normalize)
-        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return ["QB","RB","WR","TE"].map(PositionNormalizer.normalize)
-        case "IDP": return ["DL","LB","DB"]
+        case "QB","RB","WR","TE","K","DL","LB","DB": return Set([PositionNormalizer.normalize(slot)])
+        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return Set(["RB","WR","TE"].map(PositionNormalizer.normalize))
+        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return Set(["QB","RB","WR","TE"].map(PositionNormalizer.normalize))
+        case "IDP": return Set(["DL","LB","DB"])
         default:
-            if slot.uppercased().contains("IDP") { return ["DL","LB","DB"] }
-            return [PositionNormalizer.normalize(slot)]
+            if slot.uppercased().contains("IDP") { return Set(["DL","LB","DB"]) }
+            return Set([PositionNormalizer.normalize(slot)])
         }
     }
 
@@ -1035,3 +1035,4 @@ private extension Text {
         self.font(.headline.bold()).foregroundColor(.orange)
     }
 }
+

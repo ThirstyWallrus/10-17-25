@@ -531,33 +531,24 @@ class SleeperLeagueManager: ObservableObject {
                     }()
 
                     var startersForThisWeek: [String] = []
+                    // --- PATCH: Assign only ONE start per slot (not per eligible position!) ---
                     for idx in 0..<slots.count {
                         let pid = paddedStarters[idx]
                         guard pid != "0" else { continue }
-                        // --- PATCH: Robust position lookup for every starter ---
-                        let creditedPosition: String = {
-                            if let rawPlayer = allPlayers[pid], let pos = rawPlayer.position {
-                                // PATCH: normalize the position for all stat uses
-                                return PositionNormalizer.normalize(
-                                    mappedPositionForStarter(
-                                        slotName: slots[idx],
-                                        playerPositions: [pos] + (rawPlayer.fantasy_positions ?? []),
-                                        lineupConfig: lineupConfig
-                                    )
-                                )
-                            }
-                            if let teamPlayer = players.first(where: { $0.id == pid }) {
-                                return PositionNormalizer.normalize(
-                                    mappedPositionForStarter(
-                                        slotName: slots[idx],
-                                        playerPositions: [teamPlayer.position] + (teamPlayer.altPositions ?? []),
-                                        lineupConfig: lineupConfig
-                                    )
-                                )
-                            }
-                            // fallback: use slot itself (normalize)
-                            return PositionNormalizer.normalize(slots[idx].uppercased())
-                        }()
+                        let slotType = slots[idx]
+                        let rawPlayer = allPlayers[pid]
+                        let pos = rawPlayer?.position ?? players.first(where: { $0.id == pid })?.position ?? "UNK"
+                        let fantasyPositions = rawPlayer?.fantasy_positions ?? players.first(where: { $0.id == pid })?.altPositions ?? []
+                        let candidatePositions = [pos] + fantasyPositions
+
+                        // Determine credited position for this slot/player
+                        let creditedPosition = PositionNormalizer.normalize(
+                            mappedPositionForStarter(
+                                slotName: slotType,
+                                playerPositions: candidatePositions,
+                                lineupConfig: lineupConfig
+                            )
+                        )
                         let points = playersPoints[pid] ?? 0.0
                         actualPosStartCounts[creditedPosition, default: 0] += 1
                         actualPosTotals[creditedPosition, default: 0] += points
@@ -683,6 +674,15 @@ class SleeperLeagueManager: ObservableObject {
             let waiverMoves = waiverMoveCount(rosterId: roster.roster_id, in: txs)
             let faabSpentVal = faabSpent(rosterId: roster.roster_id, in: txs)
             let trades = tradeCount(rosterId: roster.roster_id, in: txs)
+
+            // --- DEBUG PRINTS PATCHED: SHOW THE FINAL ACTUAL POSITION COUNTS/TOTALS ---
+            print("[DEBUG] Team: \(teamName)")
+            print("Weeks counted: \(weeksCounted)")
+            for pos in actualPosTotals.keys.sorted() {
+                let total = actualPosTotals[pos] ?? 0
+                let starts = actualPosStartCounts[pos] ?? 0
+                print("Position \(pos): Points = \(total), Starts = \(starts), PPW = \(starts > 0 ? total / Double(starts) : 0)")
+            }
 
             let standingModel = TeamStanding(
                 id: String(roster.roster_id),

@@ -1,14 +1,19 @@
 //
 //  PlayoffStats+Aggregator.swift
 //
+//  PATCHED: All defensive position usages now pass through PositionNormalizer.normalize(_).
+//
 
+import Foundation
+
+// MARK: - Import PositionNormalizer globally
 import Foundation
 
 private let offensivePositions: Set<String> = ["QB", "RB", "WR", "TE", "K"]
 private let defensivePositions: Set<String> = ["DL", "LB", "DB"]
 
 private func isOffensiveSlot(_ slot: String) -> Bool {
-    let u = slot.uppercased()
+    let u = PositionNormalizer.normalize(slot)
     let defSlots: Set<String> = ["DL", "LB", "DB", "IDP", "DEF"]
     return !defSlots.contains(u)
 }
@@ -141,9 +146,10 @@ extension PlayoffStats {
                 if slots.count == starters.count {
                     for i in 0..<starters.count {
                         let pts = starterPoints[i]
+                        let normalizedSlot = PositionNormalizer.normalize(slots[i])
                         if isOffensiveSlot(slots[i]) {
                             opf += pts
-                        } else {
+                        } else if defensivePositions.contains(normalizedSlot) {
                             dpf += pts
                         }
                     }
@@ -164,10 +170,11 @@ extension PlayoffStats {
                             }
                             return team.roster.first { $0.id == pid }
                         }()
-                        if let pos = player?.position.uppercased() {
-                            if offensivePositions.contains(pos) {
+                        if let pos = player?.position {
+                            let normalizedPos = PositionNormalizer.normalize(pos)
+                            if offensivePositions.contains(normalizedPos) {
                                 opf += pts
-                            } else if defensivePositions.contains(pos) {
+                            } else if defensivePositions.contains(normalizedPos) {
                                 dpf += pts
                             }
                         }
@@ -184,10 +191,12 @@ extension PlayoffStats {
                     points: Double
                 )] = team.roster.compactMap { player in
                     guard let ws = player.weeklyScores.first(where: { $0.week == week }) else { return nil }
+                    let normBase = PositionNormalizer.normalize(player.position)
+                    let normAlt = (player.altPositions ?? []).map { PositionNormalizer.normalize($0) }
                     return (
                         id: player.id,
-                        basePos: player.position,
-                        altPositions: player.altPositions ?? [],
+                        basePos: normBase,
+                        altPositions: normAlt,
                         points: ws.points_half_ppr ?? ws.points
                     )
                 }
@@ -198,24 +207,21 @@ extension PlayoffStats {
 
                 for slot in slots {
                     let allowed: Set<String>
-                    switch slot.uppercased() {
-                        case "QB", "RB", "WR", "TE", "K", "DL", "LB", "DB": allowed = [slot.uppercased()]
+                    switch PositionNormalizer.normalize(slot) {
+                        case "QB", "RB", "WR", "TE", "K", "DL", "LB", "DB": allowed = [PositionNormalizer.normalize(slot)]
                         case "FLEX", "WRRB", "WRRBTE", "WRRB_TE", "RBWR", "RBWRTE": allowed = ["RB", "WR", "TE"]
                         case "SUPER_FLEX", "QBRBWRTE", "QBRBWR", "QBSF", "SFLX": allowed = ["QB", "RB", "WR", "TE"]
                         case "IDP": allowed = ["DL", "LB", "DB"]
-                        default: allowed = [slot.uppercased()]
+                        default: allowed = [PositionNormalizer.normalize(slot)]
                     }
                     let pick = candidates
-                        .filter { !usedPlayerIDs.contains($0.id) && (allowed.contains($0.basePos) || !$0.altPositions.filter { allowed.contains($0) }.isEmpty) }
+                        .filter { !usedPlayerIDs.contains($0.id) && (allowed.contains($0.basePos) || !Set($0.altPositions).intersection(allowed).isEmpty) }
                         .max(by: { $0.points < $1.points })
                     guard let cand = pick else { continue }
                     usedPlayerIDs.insert(cand.id)
                     weekMaxTotal += cand.points
-                    if isOffensiveSlot(slot) {
-                        weekMaxOff += cand.points
-                    } else {
-                        weekMaxDef += cand.points
-                    }
+                    if offensivePositions.contains(cand.basePos) { weekMaxOff += cand.points }
+                    else if defensivePositions.contains(cand.basePos) { weekMaxDef += cand.points }
                 }
                 maxPointsFor += weekMaxTotal
                 maxOffensivePointsFor += weekMaxOff
@@ -273,7 +279,7 @@ extension TeamStanding {
         roster.flatMap { player in
             player.weeklyScores.filter { $0.week == week }
                 .compactMap { ws in
-                    let pos = player.position
+                    let pos = PositionNormalizer.normalize(player.position)
                     if offensivePositions.contains(pos) {
                         return ws.points_half_ppr ?? ws.points
                     }
@@ -285,7 +291,7 @@ extension TeamStanding {
         roster.flatMap { player in
             player.weeklyScores.filter { $0.week == week }
                 .compactMap { ws in
-                    let pos = player.position
+                    let pos = PositionNormalizer.normalize(player.position)
                     if defensivePositions.contains(pos) {
                         return ws.points_half_ppr ?? ws.points
                     }
@@ -294,3 +300,4 @@ extension TeamStanding {
         }.reduce(0, +)
     }
 }
+
