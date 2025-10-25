@@ -5,7 +5,6 @@
 //  Created by Dynasty Stat Drop on 8/22/25.
 //
 
-
 //
 //  StatCardDetailViews.swift
 //  DynastyStatDrop
@@ -17,8 +16,20 @@
 import SwiftUI
 
 struct StandingsExpandedView: View {
-    let teams: [TeamStanding]
-    let selectedTeamId: String?
+    // Use centralized app selection for all league, season, team state
+    @EnvironmentObject var appSelection: AppSelection
+
+    var teams: [TeamStanding] {
+        guard let league = appSelection.selectedLeague else { return [] }
+        if appSelection.selectedSeason == "All Time" {
+            return league.seasons.sorted { $0.id < $1.id }.last?.teams ?? league.teams
+        }
+        return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams
+            ?? league.seasons.sorted { $0.id < $1.id }.last?.teams
+            ?? league.teams
+    }
+
+    var selectedTeamId: String? { appSelection.selectedTeamId }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -61,6 +72,10 @@ struct StandingsExpandedView: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .fill(Color.white.opacity(t.id == selectedTeamId ? 0.1 : 0.04))
                         )
+                        .onTapGesture {
+                            // Centralized update, select team in appSelection
+                            appSelection.selectedTeamId = t.id
+                        }
                     }
                 }
                 .padding(.vertical, 4)

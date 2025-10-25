@@ -2,11 +2,15 @@
 //  AppSelection.swift
 //  DynastyStatDrop
 //
+//  Centralized season selection logic for all views.
 //  OwnerId aware All Time selection
 //  Added:
 //   - Persistence of last selected league per username
 //   - Helper to load persisted selection
 //   - OwnerId aware team selection (uses Sleeper userId if available)
+//   - Centralized season/team selection logic.
+//   - Always prefers current year season if present.
+//   - Exposes helpers for views to use and sync selection state.
 //
 
 import SwiftUI
@@ -47,9 +51,45 @@ final class AppSelection: ObservableObject {
         }
     }
 
-    /// Updates leagues and (re)selects a league/team.
+    /// Centralized season picking logic.
+    /// - If current year present, pick that.
+    /// - Otherwise, pick latest season in DB.
+    /// - If none, fallback to "All Time".
+    func pickDefaultSeason(league: LeagueData?) -> String {
+        guard let league else { return "All Time" }
+        let currentYear = String(Calendar.current.component(.year, from: Date()))
+        if league.seasons.contains(where: { $0.id == currentYear }) {
+            return currentYear
+        }
+        return league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
+    }
+
+    /// Centralized team picking logic.
+    /// - Tries to pick by Sleeper userId, username, or first team.
+    func pickDefaultTeam(league: LeagueData?, seasonId: String, username: String?, sleeperUserId: String?) -> (teamId: String?, teamName: String?) {
+        guard let league else { return (nil, nil) }
+        let teams: [TeamStanding]
+        if seasonId == "All Time" {
+            teams = league.seasons.sorted { $0.id < $1.id }.last?.teams ?? []
+        } else {
+            teams = league.seasons.first(where: { $0.id == seasonId })?.teams ?? []
+        }
+        if let sleeperId = sleeperUserId,
+           let foundTeam = teams.first(where: { $0.ownerId == sleeperId }) {
+            return (foundTeam.id, foundTeam.name)
+        } else if let username = username,
+                  let foundTeam = teams.first(where: { $0.name == username }) {
+            return (foundTeam.id, foundTeam.name)
+        } else {
+            let firstTeam = teams.first
+            return (firstTeam?.id, firstTeam?.name)
+        }
+    }
+
+    /// Updates leagues and (re)selects a league/team/season centrally.
     /// - Persists selectedLeagueId for the given username.
     /// - Owner-aware: Uses Sleeper userId if available to match team to current user.
+    /// - Centralized: Always prefers current year season if present, else latest, else "All Time".
     func updateLeagues(_ newLeagues: [LeagueData], username: String? = nil, sleeperUserId: String? = nil) {
         leagues = newLeagues
 
@@ -70,30 +110,39 @@ final class AppSelection: ObservableObject {
         }
 
         guard let league = selectedLeague else { return }
-        let latestSeasonId = league.seasons.sorted { $0.id < $1.id }.last?.id
-        selectedSeason = latestSeasonId ?? "All Time"
 
-        // OwnerId-aware team selection logic
-        if let sleeperId = sleeperUserId,
-           let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
-           let foundTeam = latestSeason.teams.first(where: { $0.ownerId == sleeperId }) {
-            selectedTeamId = foundTeam.id
-            self.userTeam = foundTeam.name
-        } else if let username = username,
-                  let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
-                  let teamByName = latestSeason.teams.first(where: { $0.name == username }) {
-            selectedTeamId = teamByName.id
-            self.userTeam = teamByName.name
-        } else {
-            // Fallback: select first team in latest season
-            let firstTeam = league.seasons.sorted(by: { $0.id < $1.id }).last?.teams.first
-            selectedTeamId = firstTeam?.id
-            self.userTeam = firstTeam?.name ?? ""
-        }
+        // Centralized: Pick default season (prefers current year)
+        selectedSeason = pickDefaultSeason(league: league)
+
+        // Centralized: Pick default team
+        let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
+        selectedTeamId = teamPick.teamId
+        self.userTeam = teamPick.teamName ?? ""
 
         if let user = username {
             persistLeagueSelection(for: user, leagueId: selectedLeagueId)
         }
+    }
+
+    /// When league or season changes, update season/team selection centrally.
+    func syncSelectionAfterLeagueChange(username: String?, sleeperUserId: String?) {
+        guard let league = selectedLeague else {
+            selectedSeason = "All Time"
+            selectedTeamId = nil
+            return
+        }
+        selectedSeason = pickDefaultSeason(league: league)
+        let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
+        selectedTeamId = teamPick.teamId
+        self.userTeam = teamPick.teamName ?? ""
+    }
+
+    /// When season changes, update team selection centrally.
+    func syncSelectionAfterSeasonChange(username: String?, sleeperUserId: String?) {
+        guard let league = selectedLeague else { return }
+        let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
+        selectedTeamId = teamPick.teamId
+        self.userTeam = teamPick.teamName ?? ""
     }
 
     func persistLeagueSelection(for username: String, leagueId: String?) {

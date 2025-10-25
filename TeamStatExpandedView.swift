@@ -5,7 +5,6 @@
 //  Created by Dynasty Stat Drop on 8/25/25.
 //
 
-
 //
 //  DSDDashboard_Subviews.swift
 //  DynastyStatDrop
@@ -19,15 +18,19 @@ import SwiftUI
 // MARK: - TeamStatExpandedView
 
 struct TeamStatExpandedView: View {
-    let team: TeamStanding
+    @EnvironmentObject var appSelection: AppSelection
     // Closure returns (optional) aggregated all time stats wrapper for this team
     let aggregatedAllTime: (TeamStanding) -> DSDDashboard.AggregatedTeamStats?
     
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
     
+    // Use selected team from AppSelection
+    private var team: TeamStanding? { appSelection.selectedTeam }
+    
     // Derived weekly totals (actual roster total per week)
     private var weeklyPoints: [Double] {
+        guard let team else { return [] }
         let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
         return grouped.keys.sorted().map { wk in
             grouped[wk]?.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
@@ -40,12 +43,12 @@ struct TeamStatExpandedView: View {
         return weeklyPoints.suffix(3).reduce(0,+) / Double(min(3, weeksPlayed))
     }
     private var seasonAvg: Double {
-        guard weeksPlayed > 0 else { return team.teamPointsPerWeek }
+        guard weeksPlayed > 0 else { return team?.teamPointsPerWeek ?? 0 }
         return weeklyPoints.reduce(0,+) / Double(weeksPlayed)
     }
     private var formDelta: Double { last3Avg - seasonAvg }
     private var managementPercent: Double {
-        guard team.maxPointsFor > 0 else { return 0 }
+        guard let team, team.maxPointsFor > 0 else { return 0 }
         return (team.pointsFor / team.maxPointsFor) * 100
     }
     private var stdDev: Double {
@@ -64,6 +67,7 @@ struct TeamStatExpandedView: View {
     }
     
     private var strengthsPills: [String] {
+        guard let team else { return [] }
         var pills: [String] = []
         if managementPercent >= 80 { pills.append("Efficient Mgmt") }
         if let off = team.offensivePointsFor, let def = team.defensivePointsFor {
@@ -75,6 +79,7 @@ struct TeamStatExpandedView: View {
         return pills
     }
     private var weaknessPills: [String] {
+        guard let team else { return [] }
         var pills: [String] = []
         if managementPercent < 55 { pills.append("Mgmt Inefficiency") }
         if stdDev > 55 { pills.append("Volatile") }
@@ -84,21 +89,28 @@ struct TeamStatExpandedView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
-            sectionHeader("Weekly Points Trend")
-            WeeklyPointsTrend(points: weeklyPoints, accent: .yellow)
-            sectionHeader("Lineup Efficiency")
-            lineupEfficiency
-            sectionHeader("Off vs Def Contribution")
-            offDefContribution
-            sectionHeader("Recent Form (Performance Momentum)")
-            recentForm
-            sectionHeader("Strengths")
-            FlowLayoutCompat(items: strengthsPills) { Pill(text: $0, bg: Color.green.opacity(0.22), stroke: .green) }
-            sectionHeader("Weaknesses")
-            FlowLayoutCompat(items: weaknessPills) { Pill(text: $0, bg: Color.red.opacity(0.22), stroke: .red) }
-            sectionHeader("Consistency Score")
-            consistencyRow
+            if let team = team {
+                header(team: team)
+                sectionHeader("Weekly Points Trend")
+                WeeklyPointsTrend(points: weeklyPoints, accent: .yellow)
+                sectionHeader("Lineup Efficiency")
+                lineupEfficiency(team: team)
+                sectionHeader("Off vs Def Contribution")
+                offDefContribution(team: team)
+                sectionHeader("Recent Form (Performance Momentum)")
+                recentForm
+                sectionHeader("Strengths")
+                FlowLayoutCompat(items: strengthsPills) { Pill(text: $0, bg: Color.green.opacity(0.22), stroke: .green) }
+                sectionHeader("Weaknesses")
+                FlowLayoutCompat(items: weaknessPills) { Pill(text: $0, bg: Color.red.opacity(0.22), stroke: .red) }
+                sectionHeader("Consistency Score")
+                consistencyRow
+            } else {
+                Text("No team selected")
+                    .foregroundColor(.gray)
+                    .font(.headline)
+                    .padding()
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
@@ -109,13 +121,13 @@ struct TeamStatExpandedView: View {
         }
         .sheet(isPresented: $showEfficiencyInfo) {
             EfficiencyInfoSheet(managementPercent: managementPercent,
-                                pointsFor: team.pointsFor,
-                                maxPointsFor: team.maxPointsFor)
+                                pointsFor: team?.pointsFor ?? 0,
+                                maxPointsFor: team?.maxPointsFor ?? 0)
             .presentationDetents([.fraction(0.35)])
         }
     }
     
-    private var header: some View {
+    private func header(team: TeamStanding) -> some View {
         HStack(spacing: 12) {
             Text(team.winLossRecord ?? "0-0-0")
             Divider().frame(height: 10).background(Color.white.opacity(0.3))
@@ -134,7 +146,7 @@ struct TeamStatExpandedView: View {
             .padding(.top, 4)
     }
     
-    private var lineupEfficiency: some View {
+    private func lineupEfficiency(team: TeamStanding) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 statBlock(title: "PF", value: team.pointsFor)
@@ -159,7 +171,7 @@ struct TeamStatExpandedView: View {
         }
     }
     
-    private var offDefContribution: some View {
+    private func offDefContribution(team: TeamStanding) -> some View {
         let off = team.offensivePointsFor ?? 0
         let def = team.defensivePointsFor ?? 0
         let total = max(1, off + def)

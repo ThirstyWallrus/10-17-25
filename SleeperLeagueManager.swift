@@ -13,9 +13,6 @@ import SwiftUI
 // MARK: - Import PositionNormalizer for canonical defensive position mapping
 import Foundation
 
-// --- PATCH: Import global SlotPositionAssigner for credited position assignment ---
-import SlotPositionAssigner
-
 // Ensure PositionNormalizer is available to all code in this file.
 import Foundation
 

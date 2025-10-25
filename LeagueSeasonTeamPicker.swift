@@ -2,12 +2,11 @@
 //  LeagueSeasonTeamPicker.swift
 //  DynastyStatDrop
 //
-//  Fixed:
-//   - Removed calls to non‑existent AppSelection methods (setLeague / setSeason / setTeam).
-//   - Directly updates @EnvironmentObject AppSelection's published properties.
-//   - Adds small helper logic to keep season & team selections valid after changes.
-//   - Persists league selection when a new league is chosen (if a username was used during updateLeagues()).
-//     (Persistence still handled externally via AppSelection.updateLeagues; here we only mutate state.)
+//  Refactored: Centralized Season/Team/League Selection
+//  - All local selection state removed.
+//  - Always use AppSelection's published properties for league, season, and team selection.
+//  - All pickers and displays read/write to appSelection properties directly.
+//  - Appearance/features preserved; only selection logic source changed.
 //
 
 import SwiftUI
@@ -47,7 +46,7 @@ struct LeagueSeasonTeamPicker: View {
             if showLeague {
                 Menu {
                     ForEach(appSelection.leagues, id: \.id) { lg in
-                        Button(lg.name) { selectLeague(lg.id) }
+                        Button(lg.name) { appSelection.selectedLeagueId = lg.id }
                     }
                 } label: {
                     pill(appSelection.selectedLeague?.name ?? leagueLabel)
@@ -57,7 +56,7 @@ struct LeagueSeasonTeamPicker: View {
             if showSeason {
                 Menu {
                     ForEach(seasonIds, id: \.self) { sid in
-                        Button(sid) { selectSeason(sid) }
+                        Button(sid) { appSelection.selectedSeason = sid }
                     }
                 } label: {
                     pill(appSelection.selectedSeason.isEmpty ? seasonLabel : appSelection.selectedSeason)
@@ -67,7 +66,7 @@ struct LeagueSeasonTeamPicker: View {
             if showTeam {
                 Menu {
                     ForEach(seasonTeams, id: \.id) { tm in
-                        Button(tm.name) { selectTeam(tm.id) }
+                        Button(tm.name) { appSelection.selectedTeamId = tm.id }
                     }
                 } label: {
                     pill(seasonTeams.first(where: { $0.id == appSelection.selectedTeamId })?.name
@@ -86,38 +85,6 @@ struct LeagueSeasonTeamPicker: View {
             normalizeAfterLeagueChange()
             normalizeAfterSeasonChange()
         }
-    }
-
-    // MARK: - Selection Mutators
-
-    private func selectLeague(_ id: String) {
-        guard appSelection.selectedLeagueId != id else { return }
-        appSelection.selectedLeagueId = id
-        // Reset season to latest or All Time
-        if let lg = appSelection.selectedLeague {
-            let latest = lg.seasons.sorted { $0.id < $1.id }.last?.id
-            appSelection.selectedSeason = latest ?? "All Time"
-            // Pick first team in latest season (or overall fallback)
-            if let latestTeams = lg.seasons.sorted(by: { $0.id < $1.id }).last?.teams,
-               let first = latestTeams.first {
-                appSelection.selectedTeamId = first.id
-            } else {
-                appSelection.selectedTeamId = lg.teams.first?.id
-            }
-        } else {
-            appSelection.selectedSeason = "All Time"
-            appSelection.selectedTeamId = nil
-        }
-    }
-
-    private func selectSeason(_ seasonId: String) {
-        guard appSelection.selectedSeason != seasonId else { return }
-        appSelection.selectedSeason = seasonId
-        normalizeAfterSeasonChange()
-    }
-
-    private func selectTeam(_ teamId: String) {
-        appSelection.selectedTeamId = teamId
     }
 
     // MARK: - Normalization

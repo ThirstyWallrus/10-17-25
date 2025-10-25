@@ -4,52 +4,50 @@
 //
 //  Created by Dynasty Stat Drop on 7/8/25.
 //
+//  Refactored: Selection state/logic fully centralized in AppSelection
+//  - All local state for leagueId, seasonId, teamId removed
+//  - All references to league, season, team, aggregate now use AppSelection published properties
+//  - All pickers mutate AppSelection directly
+//  - No auto-selection logic locally; rely on AppSelection logic
+//
 
 import SwiftUI
 
 struct TeamStatDropView: View {
     @EnvironmentObject var appSelection: AppSelection
 
-    @State private var leagueId: String = ""
-    @State private var seasonId: String = "All Time"
-    @State private var teamId: String = ""
+    // Choose a personality or allow user to pick; here we'll just use classicESPN as default
+    @AppStorage("statDropPersonality") private var userStatDropPersonality: StatDropPersonality = .classicESPN
 
     private var league: LeagueData? {
-        appSelection.leagues.first { $0.id == leagueId }
-    }
-
-    private var latestSeason: SeasonData? {
-        league?.seasons.sorted { $0.id < $1.id }.last
-    }
-
-    private var currentTeams: [TeamStanding] {
-        latestSeason?.teams ?? []
+        appSelection.selectedLeague
     }
 
     private var seasonTeams: [TeamStanding] {
-        guard let league else { return [] }
-        if seasonId == "All Time" { return currentTeams }
-        return league.seasons.first { $0.id == seasonId }?.teams ?? []
+        guard let league = appSelection.selectedLeague else { return [] }
+        if appSelection.selectedSeason == "All Time" {
+            // Show teams from latest season for "All Time"
+            return league.seasons.sorted { $0.id < $1.id }.last?.teams ?? []
+        }
+        return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? []
     }
 
     private var team: TeamStanding? {
-        seasonTeams.first { $0.id == teamId }
+        appSelection.selectedTeam
     }
 
     private var aggregate: AggregatedOwnerStats? {
-        guard seasonId == "All Time",
-              let league,
-              let t = team else { return nil }
+        guard appSelection.selectedSeason == "All Time",
+              let league = appSelection.selectedLeague,
+              let t = appSelection.selectedTeam else { return nil }
         return league.allTimeOwnerStats?[t.ownerId]
     }
 
     private var seasonIds: [String] {
-        guard let league else { return ["All Time"] }
-        return ["All Time"] + league.seasons.map { $0.id }
+        guard let league = appSelection.selectedLeague else { return ["All Time"] }
+        let ids = league.seasons.map { $0.id }
+        return ["All Time"] + ids
     }
-
-    // Choose a personality or allow user to pick; here we'll just use classicESPN as default
-    @AppStorage("statDropPersonality") private var userStatDropPersonality: StatDropPersonality = .classicESPN
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -65,31 +63,50 @@ struct TeamStatDropView: View {
             Spacer()
         }
         .background(Color.black.ignoresSafeArea())
-        .onAppear { initPickers() }
-        .onChange(of: appSelection.leagues) { _ in syncLeague() }
-        .onChange(of: leagueId) { _ in resetSeason() }
-        .onChange(of: seasonId) { _ in resetTeam() }
+        .onAppear {
+            // On appear, no local selection logic needed.
+        }
+        // Sync menus with AppSelection updates
+        .onChange(of: appSelection.selectedLeagueId) { _ in /* No local logic needed */ }
+        .onChange(of: appSelection.selectedSeason) { _ in /* No local logic needed */ }
+        .onChange(of: appSelection.selectedTeamId) { _ in /* No local logic needed */ }
+        .onChange(of: appSelection.leagues) { _ in /* No local logic needed */ }
     }
 
     private var pickerRow: some View {
         HStack {
+            // League picker
             Menu {
                 ForEach(appSelection.leagues, id: \.id) { lg in
-                    Button(lg.name) { leagueId = lg.id }
+                    Button(lg.name) {
+                        appSelection.selectedLeagueId = lg.id
+                    }
                 }
-            } label: { pickerLabel(league?.name ?? "League", width: 150) }
+            } label: {
+                pickerLabel(appSelection.selectedLeague?.name ?? "League", width: 150)
+            }
 
+            // Season picker
             Menu {
                 ForEach(seasonIds, id: \.self) { sid in
-                    Button(sid) { seasonId = sid }
+                    Button(sid) {
+                        appSelection.selectedSeason = sid
+                    }
                 }
-            } label: { pickerLabel(seasonId, width: 110) }
+            } label: {
+                pickerLabel(appSelection.selectedSeason.isEmpty ? "Season" : appSelection.selectedSeason, width: 110)
+            }
 
+            // Team picker
             Menu {
                 ForEach(seasonTeams, id: \.id) { tm in
-                    Button(tm.name) { teamId = tm.id }
+                    Button(tm.name) {
+                        appSelection.selectedTeamId = tm.id
+                    }
                 }
-            } label: { pickerLabel(team?.name ?? "Team", width: 140) }
+            } label: {
+                pickerLabel(appSelection.selectedTeam?.name ?? "Team", width: 140)
+            }
         }
         .padding(.top, 12)
         .padding(.horizontal)
@@ -134,12 +151,10 @@ struct TeamStatDropView: View {
                     StatDropAnalysisBox(
                         team: team,
                         league: league,
-                        context: seasonId == "All Time" ? .fullTeam : .team,
+                        context: appSelection.selectedSeason == "All Time" ? .fullTeam : .team,
                         personality: userStatDropPersonality
                     )
                 }
-
-                // REMOVE strengthsWeaknesses(team) SECTION
 
                 championshipsSection(team)
             }
@@ -218,36 +233,5 @@ struct TeamStatDropView: View {
         .padding()
         .background(RoundedRectangle(cornerRadius: 10)
             .fill(Color.white.opacity(0.05)))
-    }
-
-    // MARK: - Init / Sync
-    private func initPickers() {
-        if leagueId.isEmpty { leagueId = appSelection.leagues.first?.id ?? "" }
-        if seasonId.isEmpty {
-            seasonId = league?.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-        }
-        resetTeam()
-    }
-
-    private func syncLeague() {
-        if !appSelection.leagues.contains(where: { $0.id == leagueId }) {
-            leagueId = appSelection.leagues.first?.id ?? ""
-        }
-        resetSeason()
-    }
-
-    private func resetSeason() {
-        if let lg = league,
-           seasonId != "All Time",
-           !lg.seasons.contains(where: { $0.id == seasonId }) {
-            seasonId = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-        }
-        resetTeam()
-    }
-
-    private func resetTeam() {
-        if !seasonTeams.contains(where: { $0.id == teamId }) {
-            teamId = seasonTeams.first?.id ?? ""
-        }
     }
 }

@@ -78,7 +78,7 @@ class StatsViewModel: ObservableObject {
         }
     }
     
-    // PATCHED countedPosition logic
+    // PATCHED countedPosition logic: Now uses SlotPositionAssigner global helper for slot-to-position assignment
     private func computePositionWeeklyStats(for team: TeamStanding, in season: SeasonData) -> [Position: [WeeklyPositionStats]] {
         let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
         var statsByPosition: [Position: [WeeklyPositionStats]] = [:]
@@ -147,6 +147,7 @@ class StatsViewModel: ObservableObject {
                 var posMap: [String: (score: Double, played: Int)] = [:]
                 
                 for (c, slot) in assignment {
+                    // PATCH: Use SlotPositionAssigner global helper instead of local countedPosition
                     let counted = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
                     var current = posMap[counted, default: (0, 0)]
                     current.score += c.points
@@ -190,7 +191,8 @@ class StatsViewModel: ObservableObject {
         return s.contains("IDP") && s != "DL" && s != "LB" && s != "DB"
     }
     
-    // PATCHED countedPosition: follows slot assignment as described
+    // PATCHED countedPosition: The local version is no longer used; replaced above with SlotPositionAssigner global helper.
+    // (Retained for continuity, but not called anywhere.)
     private func countedPosition(for slot: String, candidatePositions: [String], base: String) -> String {
         let s = slot.uppercased()
         let strict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]

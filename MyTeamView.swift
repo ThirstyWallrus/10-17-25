@@ -56,7 +56,7 @@ struct MyTeamView: View {
     fileprivate let menuSpacing: CGFloat = 12
     fileprivate let maxContentWidth: CGFloat = 860
 
-    // Derived references
+    // Centralized selection via AppSelection
     private var league: LeagueData? { appSelection.selectedLeague }
 
     private var allSeasonIds: [String] {
@@ -79,7 +79,7 @@ struct MyTeamView: View {
     }
 
     private var selectedTeamSeason: TeamStanding? {
-        seasonTeams.first { $0.id == appSelection.selectedTeamId }
+        appSelection.selectedTeam
     }
 
     private var aggregated: AggregatedOwnerStats? {
@@ -1035,4 +1035,3 @@ private extension Text {
         self.font(.headline.bold()).foregroundColor(.orange)
     }
 }
-

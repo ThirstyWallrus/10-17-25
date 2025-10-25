@@ -57,6 +57,10 @@ struct MatchupView: View {
     @State private var isStatDropActive: Bool = false
     @State private var isLoading: Bool = false
 
+    // MARK: - Centralized Selection
+
+    // All selection logic now uses appSelection's published properties
+
     // Derived references
     private var league: LeagueData? {
         appSelection.selectedLeague
@@ -97,7 +101,7 @@ struct MatchupView: View {
     }
 
     private var userTeamStanding: TeamStanding? {
-        seasonTeams.first { $0.ownerId == appSelection.selectedOwnerId }
+        appSelection.selectedTeam
     }
 
     private var opponentTeamStanding: TeamStanding? {
@@ -248,6 +252,7 @@ struct MatchupView: View {
         Menu {
             ForEach(appSelection.leagues, id: \.id) { lg in
                 Button(lg.name) {
+                    // Centralized selection: update appSelection only
                     appSelection.selectedLeagueId = lg.id
                     appSelection.selectedSeason = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
                     appSelection.selectedTeamId = lg.teams.first?.id

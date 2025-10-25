@@ -7,7 +7,7 @@
 
 import Foundation
 
-// --- PATCH: Import PositionNormalizer ---
+// --- PATCH: Import PositionNormalizer and SlotPositionAssigner ---
 import Foundation
 
 @MainActor
@@ -338,4 +338,7 @@ final class DSDStatsService {
         return agg.playoffStats
     }
     
+    // MARK: PATCH: If any slot-to-position assignment is needed in future, use global helper
+    // For continuity, ensure all new stat or lineup logic uses:
+    // SlotPositionAssigner.countedPosition(for: slot, candidatePositions: fantasyPositions, base: basePosition)
 }

@@ -19,13 +19,20 @@ struct TheDeck: View {
     private let STACK_TILT_Y_DEG: Double = 3.0
     private let STACK_TILT_X_DEG: Double = 2.5
 
+    // Centralized selection: always use appSelection
     private var league: LeagueData? { appSelection.selectedLeague }
     private var leagues: [LeagueData] { appSelection.leagues }
 
     private var models: [DeckFranchiseModel] {
         guard let lg = league,
               let cache = lg.allTimeOwnerStats else { return [] }
-        let latestTeams = lg.seasons.sorted { $0.id < $1.id }.last?.teams ?? lg.teams
+        let latestTeams: [TeamStanding]
+        // Always use selection from AppSelection for season
+        if appSelection.selectedSeason == "All Time" || appSelection.selectedSeason.isEmpty {
+            latestTeams = lg.seasons.sorted { $0.id < $1.id }.last?.teams ?? lg.teams
+        } else {
+            latestTeams = lg.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? lg.teams
+        }
         return latestTeams.compactMap { team in
             guard let agg = cache[team.ownerId] else { return nil }
             return DeckFranchiseModel(
@@ -36,7 +43,7 @@ struct TheDeck: View {
                 ties: agg.totalTies,
                 championships: agg.championships,
                 stats: agg,
-                weeklyActualLineupTotals: actualWeeklyTotals(ownerId: team.ownerId, league: lg),
+                weeklyActualLineupTotals: actualWeeklyTotals(ownerId: team.ownerId, league: lg, seasonId: appSelection.selectedSeason),
                 playoffStats: agg.playoffStats
             )
         }
@@ -67,7 +74,8 @@ struct TheDeck: View {
                         .foregroundColor(.orange)
                         .shadow(color: .orange.opacity(0.55), radius: 14, y: 4)
                         .padding(.top, 16)
-                    LeagueSeasonTeamPicker(showLeague: true, showSeason: false, showTeam: false)
+                    // Centralized selection: always use AppSelection's properties
+                    LeagueSeasonTeamPicker(showLeague: true, showSeason: true, showTeam: false)
                         .environmentObject(appSelection)
                 }
                 .frame(maxWidth: .infinity)
@@ -85,19 +93,17 @@ struct TheDeck: View {
             }
         }
         .onAppear {
-            if appSelection.selectedLeagueId == nil {
-                appSelection.selectedLeagueId = leagues.first?.id
-            }
+            // Remove all local selection logic; rely on centralized AppSelection
             reloadStacks()
         }
         .onChange(of: appSelection.selectedLeagueId) {
             reloadStacks()
         }
         .onChange(of: appSelection.leagues) {
-            if let sel = appSelection.selectedLeagueId,
-               !leagues.contains(where: { $0.id == sel }) {
-                appSelection.selectedLeagueId = leagues.first?.id
-            }
+            // If selectedLeagueId is no longer valid, rely on AppSelection logic to fix
+            reloadStacks()
+        }
+        .onChange(of: appSelection.selectedSeason) {
             reloadStacks()
         }
     }
@@ -105,7 +111,7 @@ struct TheDeck: View {
     private func cardStack(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
             ForEach(order, id: \.self) { idx in
-                if let pos = order.firstIndex(of: idx), pos < STACK_VISIBLE_DEPTH {
+                if let pos = order.firstIndex(of: idx), pos < STACK_VISIBLE_DEPTH, idx < models.count {
                     let model = models[idx]
                     let xOffset = CGFloat(pos) * STACK_OFFSET_X
                     let yOffset = CGFloat(pos) * STACK_OFFSET_Y
@@ -159,9 +165,15 @@ struct TheDeck: View {
         order.insert(last, at: 0)
     }
 
-    private func actualWeeklyTotals(ownerId: String, league: LeagueData) -> [Double] {
+    private func actualWeeklyTotals(ownerId: String, league: LeagueData, seasonId: String) -> [Double] {
         var timeline: [(String, Int, Double)] = []
-        for season in league.seasons.sorted(by: { $0.id < $1.id }) {
+        let targetSeasons: [SeasonData]
+        if seasonId == "All Time" || seasonId.isEmpty {
+            targetSeasons = league.seasons.sorted(by: { $0.id < $1.id })
+        } else {
+            targetSeasons = league.seasons.filter { $0.id == seasonId }
+        }
+        for season in targetSeasons {
             guard let team = season.teams.first(where: { $0.ownerId == ownerId }) else { continue }
             let playoffStart = season.playoffStartWeek ?? defaultPlayoffStart(for: season)
             let regularWeeks = Set(1..<playoffStart)
