@@ -9,15 +9,9 @@
 //
 
 import SwiftUI
-
 // Import PositionNormalizer for global normalization
 import Foundation
 
-// Import extracted subviews
-//import StandingsExplorerView
-//import TeamStatExpandedView
-//import OffStatExpandedView
-//import DefStatExpandedView
 
 struct DSDDashboard: View {
     @EnvironmentObject var authViewModel: AuthViewModel
@@ -783,7 +777,7 @@ struct DSDDashboard: View {
         .padding(.bottom, 12)
     }
     @ViewBuilder
-    private func backDetailFlip(index: Int, glow: Color) -> some View {
+        private func backDetailFlip(index: Int, glow: Color) -> some View {
             switch index {
             case 0:
                 if let allTimeOwnerStats = selectedLeague?.allTimeOwnerStats {
@@ -861,7 +855,7 @@ struct DSDDashboard: View {
                 emptyDetail
             }
         }
-        private var emptyDetail: some View {
+    private var emptyDetail: some View {
             VStack {
                 Spacer()
                 Text("No Team Selected")
@@ -1551,4 +1545,3 @@ struct DSDDashboard_Previews: PreviewProvider {
             .environmentObject(AppSelection())
     }
 }
-
