@@ -3,12 +3,8 @@ import SwiftUI
 struct DefensiveStatDropView: View {
     @EnvironmentObject var appSelection: AppSelection
 
-    @State private var leagueId: String = ""
-    @State private var seasonId: String = "All Time"
-    @State private var teamId: String = ""
-
     private var league: LeagueData? {
-        appSelection.leagues.first { $0.id == leagueId }
+        appSelection.selectedLeague
     }
 
     private var latestSeason: SeasonData? {
@@ -20,24 +16,24 @@ struct DefensiveStatDropView: View {
     }
 
     private var seasonTeams: [TeamStanding] {
-        guard let league else { return [] }
-        if seasonId == "All Time" { return currentTeams }
-        return league.seasons.first { $0.id == seasonId }?.teams ?? []
+        guard let league = league else { return [] }
+        if appSelection.selectedSeason == "All Time" { return currentTeams }
+        return league.seasons.first { $0.id == appSelection.selectedSeason }?.teams ?? []
     }
 
     private var team: TeamStanding? {
-        seasonTeams.first { $0.id == teamId }
+        appSelection.selectedTeam
     }
 
     private var aggregate: AggregatedOwnerStats? {
-        guard seasonId == "All Time",
-              let league,
+        guard appSelection.selectedSeason == "All Time",
+              let league = league,
               let t = team else { return nil }
         return league.allTimeOwnerStats?[t.ownerId]
     }
 
     private var seasonIds: [String] {
-        guard let league else { return ["All Time"] }
+        guard let league = league else { return ["All Time"] }
         return ["All Time"] + league.seasons.map { $0.id }
     }
 
@@ -57,29 +53,26 @@ struct DefensiveStatDropView: View {
             Spacer()
         }
         .background(Color.black.ignoresSafeArea())
-        .onAppear { initPickers() }
-        .onChange(of: appSelection.leagues) { _ in syncLeague() }
-        .onChange(of: leagueId) { _ in resetSeason() }
-        .onChange(of: seasonId) { _ in resetTeam() }
+        // Selection is now always centralized via AppSelection; no local state or init logic required.
     }
 
     private var pickerRow: some View {
         HStack {
             Menu {
                 ForEach(appSelection.leagues, id: \.id) { lg in
-                    Button(lg.name) { leagueId = lg.id }
+                    Button(lg.name) { appSelection.selectedLeagueId = lg.id }
                 }
             } label: { pickerLabel(league?.name ?? "League", width: 150) }
 
             Menu {
                 ForEach(seasonIds, id: \.self) { id in
-                    Button(id) { seasonId = id }
+                    Button(id) { appSelection.selectedSeason = id }
                 }
-            } label: { pickerLabel(seasonId, width: 110) }
+            } label: { pickerLabel(appSelection.selectedSeason, width: 110) }
 
             Menu {
                 ForEach(seasonTeams, id: \.id) { tm in
-                    Button(tm.name) { teamId = tm.id }
+                    Button(tm.name) { appSelection.selectedTeamId = tm.id }
                 }
             } label: { pickerLabel(team?.name ?? "Team", width: 140) }
         }
@@ -190,37 +183,6 @@ struct DefensiveStatDropView: View {
         case "LB": return .mint
         case "DB": return .pink
         default: return .white
-        }
-    }
-
-    // MARK: - Init / Sync
-    private func initPickers() {
-        if leagueId.isEmpty { leagueId = appSelection.leagues.first?.id ?? "" }
-        if seasonId.isEmpty {
-            seasonId = league?.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-        }
-        resetTeam()
-    }
-
-    private func syncLeague() {
-        if !appSelection.leagues.contains(where: { $0.id == leagueId }) {
-            leagueId = appSelection.leagues.first?.id ?? ""
-        }
-        resetSeason()
-    }
-
-    private func resetSeason() {
-        if let lg = league,
-           seasonId != "All Time",
-           !lg.seasons.contains(where: { $0.id == seasonId }) {
-            seasonId = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-        }
-        resetTeam()
-    }
-
-    private func resetTeam() {
-        if !seasonTeams.contains(where: { $0.id == teamId }) {
-            teamId = seasonTeams.first?.id ?? ""
         }
     }
 }

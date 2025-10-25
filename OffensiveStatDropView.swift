@@ -3,12 +3,10 @@ import SwiftUI
 struct OffensiveStatDropView: View {
     @EnvironmentObject var appSelection: AppSelection
 
-    @State private var leagueId: String = ""
-    @State private var seasonId: String = "All Time"
-    @State private var teamId: String = ""
+    // Remove all local @State and selection vars; use AppSelection exclusively
 
     private var league: LeagueData? {
-        appSelection.leagues.first { $0.id == leagueId }
+        appSelection.selectedLeague
     }
 
     private var latestSeason: SeasonData? {
@@ -22,16 +20,16 @@ struct OffensiveStatDropView: View {
 
     private var seasonTeams: [TeamStanding] {
         guard let league else { return [] }
-        if seasonId == "All Time" { return currentTeams }
-        return league.seasons.first { $0.id == seasonId }?.teams ?? []
+        if appSelection.selectedSeason == "All Time" { return currentTeams }
+        return league.seasons.first { $0.id == appSelection.selectedSeason }?.teams ?? []
     }
 
     private var team: TeamStanding? {
-        seasonTeams.first { $0.id == teamId }
+        seasonTeams.first { $0.id == appSelection.selectedTeamId }
     }
 
     private var aggregate: AggregatedOwnerStats? {
-        guard seasonId == "All Time",
+        guard appSelection.selectedSeason == "All Time",
               let league,
               let t = team else { return nil }
         return league.allTimeOwnerStats?[t.ownerId]
@@ -58,10 +56,14 @@ struct OffensiveStatDropView: View {
             Spacer()
         }
         .background(Color.black.ignoresSafeArea())
-        .onAppear { initPickers() }
-        .onChange(of: appSelection.leagues) { _ in syncLeague() }
-        .onChange(of: leagueId) { _ in resetSeason() }
-        .onChange(of: seasonId) { _ in resetTeam() }
+        .onAppear {
+            // Remove local picker initialization, rely on centralized selection
+            // Optionally, the view could trigger a sync if desired, but not needed for continuity
+        }
+        .onChange(of: appSelection.leagues) { _ in
+            // Rely on AppSelection's centralized sync logic, no local mutation
+        }
+        // All season/team/league changes are handled via AppSelection
     }
 
     // MARK: - Pickers
@@ -70,19 +72,27 @@ struct OffensiveStatDropView: View {
         HStack {
             Menu {
                 ForEach(appSelection.leagues, id: \.id) { lg in
-                    Button(lg.name) { leagueId = lg.id }
+                    Button(lg.name) {
+                        appSelection.selectedLeagueId = lg.id
+                        appSelection.syncSelectionAfterLeagueChange(username: nil, sleeperUserId: nil)
+                    }
                 }
             } label: { pickerLabel(league?.name ?? "League", width: 150) }
 
             Menu {
                 ForEach(seasonIds, id: \.self) { sid in
-                    Button(sid) { seasonId = sid }
+                    Button(sid) {
+                        appSelection.selectedSeason = sid
+                        appSelection.syncSelectionAfterSeasonChange(username: nil, sleeperUserId: nil)
+                    }
                 }
-            } label: { pickerLabel(seasonId, width: 110) }
+            } label: { pickerLabel(appSelection.selectedSeason, width: 110) }
 
             Menu {
                 ForEach(seasonTeams, id: \.id) { tm in
-                    Button(tm.name) { teamId = tm.id }
+                    Button(tm.name) {
+                        appSelection.selectedTeamId = tm.id
+                    }
                 }
             } label: { pickerLabel(team?.name ?? "Team", width: 140) }
         }
@@ -175,12 +185,12 @@ struct OffensiveStatDropView: View {
 
     private func posPPW(_ pos: String) -> Double {
         if let a = aggregate { return a.positionAvgPPW[pos] ?? 0 }
-        return team?.positionAverages?[pos] ?? 0
+        return team.positionAverages?[pos] ?? 0
     }
 
     private func posIndPPW(_ pos: String) -> Double {
         if let a = aggregate { return a.individualPositionPPW[pos] ?? 0 }
-        return team?.individualPositionAverages?[pos] ?? 0
+        return team.individualPositionAverages?[pos] ?? 0
     }
 
     // MARK: - UI Helpers
@@ -207,40 +217,6 @@ struct OffensiveStatDropView: View {
         case "TE": return .yellow
         case "K": return .purple
         default: return .white
-        }
-    }
-
-    // MARK: - Init / Sync
-
-    private func initPickers() {
-        if leagueId.isEmpty { leagueId = appSelection.leagues.first?.id ?? "" }
-        if seasonId.isEmpty {
-            seasonId = league?.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-        }
-        resetTeam()
-    }
-
-    private func syncLeague() {
-        if !appSelection.leagues.contains(where: { $0.id == leagueId }) {
-            leagueId = appSelection.leagues.first?.id ?? ""
-        }
-        resetSeason()
-    }
-
-    private func resetSeason() {
-        if let lg = league {
-            if !lg.seasons.contains(where: { $0.id == seasonId }) && seasonId != "All Time" {
-                seasonId = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-            }
-        } else {
-            seasonId = "All Time"
-        }
-        resetTeam()
-    }
-
-    private func resetTeam() {
-        if !seasonTeams.contains(where: { $0.id == teamId }) {
-            teamId = seasonTeams.first?.id ?? ""
         }
     }
 }
