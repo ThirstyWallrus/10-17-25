@@ -96,7 +96,7 @@ struct MyTeamView: View {
     private var availableWeeks: [String] {
         guard let team = selectedTeamSeason else { return ["SZN"] }
         // Use all weeks in matchup data for this team, not just team.roster
-        if let season = league?.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+        if let season = league?.seasons.first(where: { $0.id == appSelection.selectedSeason }),
            let mByWeek = season.matchupsByWeek {
             let weeks = mByWeek.keys.sorted()
             if weeks.isEmpty { return ["SZN"] }

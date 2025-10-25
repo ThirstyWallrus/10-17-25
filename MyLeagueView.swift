@@ -92,7 +92,7 @@ struct MyLeagueView: View {
     // PATCH: Week options and menu
     private var availableWeeks: [String] {
         guard let team = seasonTeams.first else { return ["Full Season"] }
-        if let season = league?.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+        if let season = league?.seasons.first(where: { $0.id == appSelection.selectedSeason }),
            let mByWeek = season.matchupsByWeek {
             let weeks = mByWeek.keys.sorted()
             if weeks.isEmpty { return ["Full Season"] }
