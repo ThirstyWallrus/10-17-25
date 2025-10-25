@@ -5,7 +5,6 @@
 //  Created by Dynasty Stat Drop on 10/20/25.
 //
 
-
 //
 //  StandingsExplorerView.swift
 //  DynastyStatDrop
@@ -16,8 +15,9 @@
 import SwiftUI
 
 struct StandingsExplorerView: View {
-    let teams: [TeamStanding]
-    let myTeamId: String?
+    // Centralized selection: use AppSelection singleton
+    @EnvironmentObject var appSelection: AppSelection
+
     let categories: [Category]
     let ascendingBetter: Set<Category>
     @Binding var selected: Category
@@ -35,6 +35,22 @@ struct StandingsExplorerView: View {
     let allTimeOwnerStats: [String: AggregatedOwnerStats]?
     @State private var internalScrollID = UUID()
 
+    // -- Centralized selection --
+    private var league: LeagueData? {
+        appSelection.selectedLeague
+    }
+    private var teams: [TeamStanding] {
+        guard let league = league else { return [] }
+        if appSelection.selectedSeason == "All Time" {
+            return league.seasons.sorted { $0.id < $1.id }.last?.teams ?? league.teams
+        }
+        return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams
+            ?? league.seasons.sorted { $0.id < $1.id }.last?.teams
+            ?? league.teams
+    }
+    private var myTeamId: String? {
+        appSelection.selectedTeamId
+    }
     private var selectedTeam: TeamStanding? {
         guard let id = myTeamId else { return nil }
         return teams.first(where: { $0.id == id })
@@ -162,6 +178,10 @@ struct StandingsExplorerView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isMine ? colorForCategory(selected).opacity(0.6) : Color.clear, lineWidth: 1)
         )
+        .onTapGesture {
+            // Centralized update, select team in appSelection
+            appSelection.selectedTeamId = team.id
+        }
     }
 
     private func rankBadge(_ rank: Int) -> some View {

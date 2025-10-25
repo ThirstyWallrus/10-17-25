@@ -9,9 +9,7 @@
 //
 
 import SwiftUI
-// Import PositionNormalizer for global normalization
 import Foundation
-
 
 struct DSDDashboard: View {
     @EnvironmentObject var authViewModel: AuthViewModel
@@ -34,21 +32,14 @@ struct DSDDashboard: View {
         .offensivePointsFor,
         .averageOffensivePPW,
         .offensiveManagementPercent
-        // Uncomment next line if you want Off MPF to appear by default:
-        // , .maxOffensivePointsFor
     ]
     private let defaultDefensive: Set<Category>  = [
         .defensivePointsFor,
         .averageDefensivePPW,
         .defensiveManagementPercent
-        // Uncomment next line if you want Def MPF by default:
-        // , .maxDefensivePointsFor
     ]
    
     // UI / selection state
-    @State private var selectedDate: String = ""
-    @State private var selectedTeamId: String?
-    @State private var selectedTeamName: String?
     @State private var showImportLeague = false
     @State private var showSettingsMenu = false
    
@@ -75,26 +66,21 @@ struct DSDDashboard: View {
     // Convenience
     var selectedLeague: LeagueData? { appSelection.selectedLeague }
     var seasons: [SeasonData] { selectedLeague?.seasons ?? [] }
-    private var isAllTimeMode: Bool { selectedDate == "All Time" }
+    private var isAllTimeMode: Bool { appSelection.selectedSeason == "All Time" }
    
     var allSeasonNames: [String] {
         let ids = seasons.map { $0.id }
-        return ids.isEmpty ? ["All Time"] : ids + ["All Time"]
+        return ids.isEmpty ? ["All Time"] : ["All Time"] + ids
     }
     var teams: [TeamStanding] {
         guard let league = selectedLeague else { return [] }
         if isAllTimeMode {
             return league.seasons.sorted { $0.id < $1.id }.last?.teams ?? []
         }
-        return league.seasons.first(where: { $0.id == selectedDate })?.teams ?? []
+        return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? []
     }
     var selectedTeam: TeamStanding? {
-        if let name = selectedTeamName {
-            return teams.first { $0.name == name } ?? teams.first
-        }
-        if let tid = selectedTeamId { return teams.first { $0.id == tid } ?? teams.first }
-        if let uname = authViewModel.userTeam { return teams.first { $0.name == uname } ?? teams.first }
-        return teams.first
+        appSelection.selectedTeam
     }
    
     private func aggregatedOwner(for team: TeamStanding?) -> AggregatedOwnerStats? {
@@ -157,15 +143,15 @@ struct DSDDashboard: View {
     // Header helpers
     private var seasonDisplayText: String {
         guard let league = selectedLeague else { return "--" }
-        if isAllTimeMode || selectedDate.isEmpty {
+        if isAllTimeMode || appSelection.selectedSeason.isEmpty {
             let count = league.seasons.count
             return "\(count)\(ordinalSuffix(count)) season"
         }
-        if let idx = league.seasons.firstIndex(where: { $0.id == selectedDate }) {
+        if let idx = league.seasons.firstIndex(where: { $0.id == appSelection.selectedSeason }) {
             let n = idx + 1
             return "\(n)\(ordinalSuffix(n)) season"
         }
-        return selectedDate
+        return appSelection.selectedSeason
     }
     private func displayRecord() -> String {
         if isAllTimeMode, let agg = aggregatedAllTime {
@@ -249,7 +235,6 @@ struct DSDDashboard: View {
         }
         .onAppear {
             initializeDefaultSelections()
-            selectAppropriateLeague()
             syncInitialSelections(replaceTeam: false)
             loadCustomizationIfAvailable()
             standingsSelectedCategory = standingsExplorerCategories.first ?? .teamStanding
@@ -264,7 +249,7 @@ struct DSDDashboard: View {
             loadCustomizationIfAvailable(force: true)
         }
         .onChange(of: authViewModel.userTeam) { _, _ in syncInitialSelections(replaceTeam: true) }
-        .onChange(of: selectedDate) { _, _ in handleSeasonChange() }
+        .onChange(of: appSelection.selectedSeason) { _, _ in handleSeasonChange() }
         .onChange(of: selectedStandings) { _, _ in enforceIntegrityAndPersist() }
         .onChange(of: selectedTeamStats) { _, _ in enforceIntegrityAndPersist() }
         .onChange(of: selectedOffensiveStats) { _, _ in enforceIntegrityAndPersist() }
@@ -300,8 +285,7 @@ struct DSDDashboard: View {
                 ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
                 : team.name
             }
-            return selectedTeamName
-            ?? authViewModel.userTeam
+            return appSelection.userTeam
             ?? fallbackFirstTeamName()
             ?? "Team"
         }()
@@ -347,9 +331,8 @@ struct DSDDashboard: View {
                         onLeagueImported: { newLeagueId in
                             appSelection.selectedLeagueId = newLeagueId
                             customizationLoaded = false
-                            selectedDate = ""
-                            selectedTeamId = nil
-                            selectedTeamName = nil
+                            appSelection.selectedSeason = ""
+                            appSelection.selectedTeamId = nil
                             suppressAutoUserTeam = false
                             DispatchQueue.main.async {
                                 syncInitialSelections(replaceTeam: true)
@@ -357,8 +340,6 @@ struct DSDDashboard: View {
                                    let league = appSelection.leagues.first(where: { $0.id == newLeagueId }),
                                    let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
                                    let userTeamMatch = latestSeason.teams.first(where: { $0.name == userTeam }) {
-                                    selectedTeamId = userTeamMatch.id
-                                    selectedTeamName = userTeamMatch.name
                                     appSelection.selectedTeamId = userTeamMatch.id
                                 }
                                 loadCustomizationIfAvailable(force: true)
@@ -408,11 +389,11 @@ struct DSDDashboard: View {
         Menu {
             ForEach(allSeasonNames, id: \.self) { name in
                 Button(name) {
-                    selectedDate = name
+                    appSelection.selectedSeason = name
                     handleSeasonChange()
                 }
             }
-        } label: { menuLabel(selectedDate.isEmpty ? "Season" : selectedDate) }
+        } label: { menuLabel(appSelection.selectedSeason.isEmpty ? "Season" : appSelection.selectedSeason) }
     }
     private var leagueMenu: some View {
         Menu {
@@ -422,10 +403,7 @@ struct DSDDashboard: View {
                     let key = "dsd.lastSelectedLeague.\(currentUsernameForKey())"
                     UserDefaults.standard.set(league.id, forKey: key)
                     customizationLoaded = false
-                    selectedDate = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-                    if selectedTeamName == nil {
-                        selectedTeamName = authViewModel.userTeam
-                    }
+                    appSelection.selectedSeason = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
                     handleSeasonChange()
                     loadCustomizationIfAvailable(force: true)
                 }
@@ -433,7 +411,7 @@ struct DSDDashboard: View {
             Divider()
             Button("Upload New League") { showImportLeague = true }
         } label: {
-            menuLabel(selectedLeague?.name ?? "Import League")
+            menuLabel(appSelection.selectedLeague?.name ?? "Import League")
         }
     }
    
@@ -532,14 +510,9 @@ struct DSDDashboard: View {
                 let displayName = isAllTimeMode
                     ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
                     : team.name
-                let isSelected = selectedTeamId == team.id ||
-                              (selectedTeamName != nil && selectedTeamName == displayName) ||
-                              (authViewModel.userTeam != nil && authViewModel.userTeam == displayName)
+                let isSelected = appSelection.selectedTeamId == team.id
                 Button(displayName) {
-                    selectedTeamId = team.id
-                    selectedTeamName = displayName
                     appSelection.selectedTeamId = team.id
-                    suppressAutoUserTeam = true
                 }
                 .foregroundColor(isSelected ? .orange : .white)
                 .background(isSelected ? Color.orange.opacity(0.2) : Color.clear)
@@ -552,7 +525,7 @@ struct DSDDashboard: View {
                     ? (aggregatedOwner(for: team)?.latestDisplayName ?? team.name)
                     : team.name
                 }
-                return selectedTeamName ?? authViewModel.userTeam ?? "Select Team"
+                return appSelection.userTeam ?? "Select Team"
             }()
             menuLabel(displayName)
         }
@@ -714,21 +687,21 @@ struct DSDDashboard: View {
         }
     }
     @ViewBuilder
-    private func flipFaceContainer(index: Int, glow: Color) -> some View {
-        let angle = 180.0 * Double(flipModel.flipProgress)
-        ZStack {
-            if let team = selectedTeam {
-                frontSummaryFlip(index: index, team: team, glow: glow)
-                    .opacity(angle < 90 ? 1 : 0)
-                    .rotation3DEffect(.degrees(angle), axis: (0,1,0), perspective: 0.9/900)
+        private func flipFaceContainer(index: Int, glow: Color) -> some View {
+            let angle = 180.0 * Double(flipModel.flipProgress)
+            ZStack {
+                if let team = selectedTeam {
+                    frontSummaryFlip(index: index, team: team, glow: glow)
+                        .opacity(angle < 90 ? 1 : 0)
+                        .rotation3DEffect(.degrees(angle), axis: (0,1,0), perspective: 0.9/900)
+                }
+                backDetailFlip(index: index, glow: glow)
+                    .opacity(angle >= 90 ? 1 : 0)
+                    .rotation3DEffect(.degrees(angle - 180), axis: (0,1,0), perspective: 0.9/900)
+                closeButton
             }
-            backDetailFlip(index: index, glow: glow)
-                .opacity(angle >= 90 ? 1 : 0)
-                .rotation3DEffect(.degrees(angle - 180), axis: (0,1,0), perspective: 0.9/900)
-            closeButton
+            .clipped()
         }
-        .clipped()
-    }
     private var closeButton: some View {
         VStack {
             HStack {
@@ -1362,111 +1335,37 @@ struct DSDDashboard: View {
     }
     private func syncInitialSelections(replaceTeam: Bool) {
         guard let league = selectedLeague else { return }
-        if selectedDate.isEmpty { selectedDate = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time" }
+        if appSelection.selectedSeason.isEmpty { appSelection.selectedSeason = league.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time" }
         if let userTeam = authViewModel.userTeam,
            let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last,
            let userTeamMatch = latestSeason.teams.first(where: { $0.name == userTeam }) {
-            selectedTeamId = userTeamMatch.id
-            selectedTeamName = userTeamMatch.name
             appSelection.selectedTeamId = userTeamMatch.id
-        } else if replaceTeam, selectedTeamName == nil {
+        } else if replaceTeam, appSelection.selectedTeamId == nil {
             let firstTeam = teams.first
-            selectedTeamId = firstTeam?.id
-            selectedTeamName = firstTeam?.name
             appSelection.selectedTeamId = firstTeam?.id
         }
-        appSelection.selectedSeason = selectedDate
     }
     private func handleSeasonChange() {
-        appSelection.selectedSeason = selectedDate
         guard selectedLeague != nil else { return }
-        if let name = selectedTeamName {
+        if let tid = appSelection.selectedTeamId {
             if isAllTimeMode {
-                if let match = teams.first(where: { $0.name == name }) {
-                    selectedTeamId = match.id
+                if let match = teams.first(where: { $0.id == tid }) {
                     appSelection.selectedTeamId = match.id
                     return
                 }
-            } else if let match = teams.first(where: { $0.name == name }) {
-                selectedTeamId = match.id
+            } else if let match = teams.first(where: { $0.id == tid }) {
                 appSelection.selectedTeamId = match.id
                 return
             }
         }
         if !suppressAutoUserTeam, let ut = authViewModel.userTeam {
-            selectedTeamId = teams.first { $0.name == ut }?.id ?? teams.first?.id
-        } else if selectedTeamId == nil {
-            selectedTeamId = teams.first?.id
+            appSelection.selectedTeamId = teams.first { $0.name == ut }?.id ?? teams.first?.id
+        } else if appSelection.selectedTeamId == nil {
+            appSelection.selectedTeamId = teams.first?.id
         }
-        appSelection.selectedTeamId = selectedTeamId
     }
     private func fallbackFirstTeamName() -> String? {
         selectedLeague?.seasons.sorted { $0.id < $1.id }.last?.teams.first?.name
-    }
-    private func selectAppropriateLeague() {
-        guard !appSelection.leagues.isEmpty else { return }
-        if let current = appSelection.selectedLeagueId,
-           appSelection.leagues.contains(where: { $0.id == current }) {
-            return
-        }
-        let key = "dsd.lastSelectedLeague.\(currentUsernameForKey())"
-        if let saved = UserDefaults.standard.string(forKey: key),
-           appSelection.leagues.contains(where: { $0.id == saved }) {
-            appSelection.selectedLeagueId = saved
-        } else {
-            appSelection.selectedLeagueId = appSelection.leagues.sorted { $0.name < $1.name }.first?.id
-        }
-    }
-    struct FlipTiltModifier: ViewModifier {
-        let progress: CGFloat
-        let enabled: Bool
-        let glow: Color
-        let reducedMotion: Bool
-        func body(content: Content) -> some View {
-            content
-                .modifier(XTilt(progress: progress, enabled: enabled && !reducedMotion))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(glow.opacity(enabled ? 0.55 : 0), lineWidth: enabled ? 2 : 0)
-                        .blur(radius: enabled ? 1.5 : 0)
-                )
-                .animation(.easeInOut(duration: reducedMotion ? 0.25 : 0.55), value: enabled)
-        }
-        struct XTilt: ViewModifier {
-            let progress: CGFloat
-            let enabled: Bool
-            func body(content: Content) -> some View {
-                guard enabled else { return AnyView(content) }
-                let xAngle = 15.0 * progress
-                return AnyView(
-                    content
-                        .rotation3DEffect(.degrees(xAngle),
-                                          axis: (x: 1, y: 0, z: 0),
-                                          perspective: 0.9/1200)
-                        .shadow(color: .black.opacity(0.5 - 0.3 * Double(min(progress,1))),
-                                radius: 16, x: 0, y: 8)
-                )
-            }
-        }
-    }
-    struct SDSettingsView: View {
-        @AppStorage("statDropPersonality") var personality: StatDropPersonality = .classicESPN
-        var body: some View {
-            List {
-                Section(header: Text("AI Personality")) {
-                    Picker("Select Personality", selection: $personality) {
-                        ForEach(StatDropPersonality.allCases) { p in
-                            VStack(alignment: .leading) {
-                                Text(p.displayName)
-                                Text(p.description).font(.caption).foregroundColor(.gray)
-                            }.tag(p)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-            }
-            .navigationTitle("Stat Drop Settings")
-        }
     }
     private func loadSavedLeagues() {
         guard let username = authViewModel.currentUsername else { return }
