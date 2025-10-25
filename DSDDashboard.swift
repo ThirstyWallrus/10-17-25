@@ -13,6 +13,12 @@ import SwiftUI
 // Import PositionNormalizer for global normalization
 import Foundation
 
+// Import extracted subviews
+//import StandingsExplorerView
+//import TeamStatExpandedView
+//import OffStatExpandedView
+//import DefStatExpandedView
+
 struct DSDDashboard: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var appSelection: AppSelection
@@ -778,40 +784,39 @@ struct DSDDashboard: View {
     }
     @ViewBuilder
     private func backDetailFlip(index: Int, glow: Color) -> some View {
-        switch index {
-        case 0:
-            if let allTimeOwnerStats = selectedLeague?.allTimeOwnerStats {
-                Group {
-                    StandingsExplorerView(
-                        teams: teams,
-                        myTeamId: selectedTeam?.id,
-                        categories: standingsExplorerCategories,
-                        ascendingBetter: ascendingBetterStandings,
-                        selected: $standingsSelectedCategory,
-                        searchText: $standingsSearchText,
-                        showGrid: $standingsShowGrid,
-                        statProvider: { cat, tm in self.valueForStandingCategory(cat, team: tm) },
-                        rankProvider: { cat, tm in self.rankString(for: cat, team: tm) },
-                        colorForCategory: { categoryColor(for: $0) },
-                        onClose: { flipModel.collapse() },
-                        isAllTimeMode: isAllTimeMode,
-                        ownerAggProvider: { aggregatedOwner(for: $0) },
-                        ascendingBetterStandings: ascendingBetterStandings,
-                        allTimeOwnerStats: allTimeOwnerStats
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .padding(8)
+            switch index {
+            case 0:
+                if let allTimeOwnerStats = selectedLeague?.allTimeOwnerStats {
+                    Group {
+                        StandingsExplorerView(
+                            teams: teams,
+                            myTeamId: selectedTeam?.id,
+                            categories: standingsExplorerCategories,
+                            ascendingBetter: ascendingBetterStandings,
+                            selected: $standingsSelectedCategory,
+                            searchText: $standingsSearchText,
+                            showGrid: $standingsShowGrid,
+                            statProvider: { cat, tm in self.valueForStandingCategory(cat, team: tm) },
+                            rankProvider: { cat, tm in self.rankString(for: cat, team: tm) },
+                            colorForCategory: { categoryColor(for: $0) },
+                            onClose: { flipModel.collapse() },
+                            isAllTimeMode: isAllTimeMode,
+                            ownerAggProvider: { aggregatedOwner(for: $0) },
+                            ascendingBetterStandings: ascendingBetterStandings,
+                            allTimeOwnerStats: allTimeOwnerStats
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .padding(8)
+                    }
+                } else {
+                    Group {
+                        emptyDetail
+                    }
                 }
-            } else {
-                Group {
-                    emptyDetail
-                }
-            }
-        case 1:
-            if let team = selectedTeam {
+            case 1:
+                // TeamStatExpandedView only takes aggregatedAllTime closure
                 ScrollView {
                     TeamStatExpandedView(
-                        team: team,
                         aggregatedAllTime: { self.aggregatedStats(for: $0) }
                     )
                     .padding(.horizontal, 8)
@@ -820,52 +825,51 @@ struct DSDDashboard: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(4)
-            } else { emptyDetail }
-        case 2:
-            if let team = selectedTeam {
-                ScrollView {
-                    OffDefStatExpandedView(
-                        team: team,
-                        mode: .offense,
-                        league: selectedLeague!,
-                        personality: userStatDropPersonality
-                    )
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .padding(4)
-            } else { emptyDetail }
-        case 3:
-            if let team = selectedTeam {
-                ScrollView {
-                    OffDefStatExpandedView(
-                        team: team,
-                        mode: .defense,
-                        league: selectedLeague!,
-                        personality: userStatDropPersonality
-                    )
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .padding(4)
-            } else { emptyDetail }
-        default:
-            emptyDetail
+            case 2:
+                // Use OffStatExpandedView for offense (see OffStatExpandedView.swift)
+                if let team = selectedTeam, let league = selectedLeague {
+                    ScrollView {
+                        OffStatExpandedView(
+                            team: team,
+                            league: league,
+                            personality: userStatDropPersonality
+                        )
+                        .padding(.horizontal, 8)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(4)
+                } else { emptyDetail }
+            case 3:
+                // Use DefStatExpandedView for defense (see DefStatExpandedView.swift)
+                if let team = selectedTeam, let league = selectedLeague {
+                    ScrollView {
+                        DefStatExpandedView(
+                            team: team,
+                            league: league,
+                            personality: userStatDropPersonality
+                        )
+                        .padding(.horizontal, 8)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(4)
+                } else { emptyDetail }
+            default:
+                emptyDetail
+            }
         }
-    }
-    private var emptyDetail: some View {
-        VStack {
-            Spacer()
-            Text("No Team Selected")
-                .foregroundColor(.gray)
-                .font(.headline)
-            Spacer()
+        private var emptyDetail: some View {
+            VStack {
+                Spacer()
+                Text("No Team Selected")
+                    .foregroundColor(.gray)
+                    .font(.headline)
+                Spacer()
+            }
         }
-    }
    
     // MARK: Helpers (color, stats, ranking)
     private func categoryColor(for category: Category) -> Color {
