@@ -88,12 +88,9 @@ struct MatchupView: View {
     /// Returns the available week choices as ["Week 1", "Week 2", ...] only.
     private var availableWeeks: [String] {
         guard let team = userTeamStanding else { return [] }
-        // Gather all week numbers for which the user's team has scores
         let allWeeks = team.roster.flatMap { $0.weeklyScores }.map { $0.week }
         let uniqueWeeks = Set(allWeeks).sorted()
-        // If no weeks, return empty
         if uniqueWeeks.isEmpty { return [] }
-        // Format as ["Week 1", "Week 2", ...]
         return uniqueWeeks.map { "Week \($0)" }
     }
 
@@ -130,11 +127,9 @@ struct MatchupView: View {
     /// Determines the current week number (default for the menu).
     /// If selectedWeek is empty, defaults to the latest week available.
     private var currentWeekNumber: Int {
-        // Parse selectedWeek like "Week 1" → 1
         if let weekNum = Int(selectedWeek.replacingOccurrences(of: "Week ", with: "")), !selectedWeek.isEmpty {
             return weekNum
         }
-        // If not set, use latest available week
         if let lastWeek = availableWeeks.last,
            let lastNum = Int(lastWeek.replacingOccurrences(of: "Week ", with: "")) {
             return lastNum
@@ -185,7 +180,6 @@ struct MatchupView: View {
 
     /// Sets the initial week selection to the current/latest week.
     private func setDefaultWeekSelection() {
-        // If weeks available, pick the latest (current) week
         if let lastWeek = availableWeeks.last {
             selectedWeek = lastWeek
         } else {
@@ -279,7 +273,7 @@ struct MatchupView: View {
                 Button(sid) {
                     appSelection.selectedSeason = sid
                     appSelection.syncSelectionAfterSeasonChange(username: nil, sleeperUserId: nil)
-                    setDefaultWeekSelection() // Update week selection if season changes
+                    setDefaultWeekSelection()
                 }
             }
         } label: {
@@ -287,15 +281,54 @@ struct MatchupView: View {
         }
     }
 
-    /// Week menu now only lists ["Week 1", "Week 2", ...] (no SZN/full season).
+    /// Week menu now lists ["Week 1", "Week 2", ...] (no SZN/full season), with scores next to each week.
     private var weekMenu: some View {
         Menu {
             ForEach(availableWeeks, id: \.self) { wk in
-                Button(wk) { selectedWeek = wk }
+                weekMenuRow(for: wk)
             }
         } label: {
             menuLabel(selectedWeek.isEmpty ? (availableWeeks.last ?? "Week 1") : selectedWeek)
         }
+    }
+
+    /// Menu row: Week N - ###.## (score), Team's PF for that week
+    @ViewBuilder
+    private func weekMenuRow(for weekLabel: String) -> some View {
+        let weekNum = Int(weekLabel.replacingOccurrences(of: "Week ", with: "")) ?? 0
+        let (isWin, pf) = weekResult(for: weekNum)
+        let pfString = String(format: "%.2f", pf)
+        Button(action: { selectedWeek = weekLabel }) {
+            HStack(spacing: 10) {
+                Text(weekLabel)
+                    .foregroundColor(isWin == nil ? .white : (isWin! ? .green : .red))
+                Text("-")
+                    .foregroundColor(.white.opacity(0.7))
+                Text(pfString)
+                    .foregroundColor(.cyan)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Returns (isWin, pf) for a given week number.
+    private func weekResult(for weekNum: Int) -> (Bool?, Double) {
+        guard let league = league,
+              let userTeam = userTeamStanding,
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }),
+              let matchups = season.matchupsByWeek?[weekNum],
+              let userRosterId = Int(userTeam.id)
+        else { return (nil, 0.0) }
+        let userEntry = matchups.first(where: { $0.roster_id == userRosterId })
+        let oppEntry = matchups.first(where: { $0.roster_id != userRosterId })
+        let pf = userEntry?.points ?? 0.0
+        if let ue = userEntry, let oe = oppEntry, ue.points != nil, oe.points != nil {
+            if ue.points! > oe.points! { return (true, pf) }
+            else if ue.points! < oe.points! { return (false, pf) }
+            else { return (nil, pf) }
+        }
+        return (nil, pf)
     }
 
     private var statDropMenu: some View {
