@@ -145,7 +145,7 @@ final class DSDStatsService {
     // MARK: Week-exclusion patch helpers for season aggregations
 
     // Use only completed weeks for season-long stat aggregations.
-    private func filteredPointsFor(team: TeamStanding, league: LeagueData?) -> Double {
+    private func filteredPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
         guard let league = league,
               let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
             return team.pointsFor
@@ -159,7 +159,7 @@ final class DSDStatsService {
             .reduce(0) { $0 + $1.points }
     }
 
-    private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?) -> Double {
+    private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
         guard let league = league,
               let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
             return team.maxPointsFor
@@ -173,13 +173,13 @@ final class DSDStatsService {
         return team.maxPointsFor
     }
 
-    private func filteredManagementPercent(team: TeamStanding, league: LeagueData?) -> Double {
+    private func filteredManagementPercent(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
         let pf = filteredPointsFor(team: team, league: league)
         let maxPF = filteredMaxPointsFor(team: team, league: league)
         return maxPF > 0 ? (pf / maxPF) * 100 : 0
     }
 
-    private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?) -> Double {
+    private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
         guard let league = league,
               let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
             return team.teamPointsPerWeek
