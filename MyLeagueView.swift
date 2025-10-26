@@ -201,13 +201,13 @@ struct MyLeagueView: View {
 
     // Week stat/grade helpers
     private func statForWeek(team: TeamStanding, week: Int, context: LeagueContext) -> Double {
-        // --- DEBUG PATCH: Print matchup entry and points for this team/week ---
         debugPrintMatchupEntry(team: team, week: week, context: context)
-        guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
-              let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
-              let starters = myEntry.starters,
-              let playersPoints = myEntry.players_points
+        guard
+            let league = league,
+            let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }), // <--- FIXED HERE
+            let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
+            let starters = myEntry.starters,
+            let playersPoints = myEntry.players_points
         else { return 0 }
         let allPlayers = leagueManager.playerCache ?? [:]
         var off = 0.0, def = 0.0, total = 0.0
@@ -465,6 +465,7 @@ struct MyLeagueView: View {
             ForEach(allSeasonIds, id: \.self) { sid in
                 Button(sid) {
                     appSelection.selectedSeason = sid
+                    appSelection.syncSelectionAfterSeasonChange(username: nil, sleeperUserId: nil)
                 }
             }
         } label: {

@@ -135,9 +135,9 @@ struct OffensiveStatDropView: View {
                         HStack {
                             Text("\(pos):")
                                 .foregroundColor(colorFor(pos)).bold()
-                            Text("Avg/Wk: \(String(format: "%.2f", posPPW(pos)))")
+                            Text("Avg/Wk: \(String(format: "%.2f", posPPW(pos, team: team)))")
                                 .foregroundColor(.white)
-                            Text("Per Slot: \(String(format: "%.2f", posIndPPW(pos)))")
+                            Text("Per Slot: \(String(format: "%.2f", posIndPPW(pos, team: team)))")
                                 .foregroundColor(.cyan)
                         }
                         .font(.caption.bold())
@@ -183,12 +183,13 @@ struct OffensiveStatDropView: View {
         return String(format: "%.1f%%", m)
     }
 
-    private func posPPW(_ pos: String) -> Double {
+    // MARK: - Fixed optionals for team?.positionAverages and team?.individualPositionAverages
+    private func posPPW(_ pos: String, team: TeamStanding) -> Double {
         if let a = aggregate { return a.positionAvgPPW[pos] ?? 0 }
         return team.positionAverages?[pos] ?? 0
     }
 
-    private func posIndPPW(_ pos: String) -> Double {
+    private func posIndPPW(_ pos: String, team: TeamStanding) -> Double {
         if let a = aggregate { return a.individualPositionPPW[pos] ?? 0 }
         return team.individualPositionAverages?[pos] ?? 0
     }

@@ -268,6 +268,7 @@ struct MatchupView: View {
             ForEach(allSeasonIds, id: \.self) { sid in
                 Button(sid) {
                     appSelection.selectedSeason = sid
+                    appSelection.syncSelectionAfterSeasonChange(username: nil, sleeperUserId: nil)
                 }
             }
         } label: {

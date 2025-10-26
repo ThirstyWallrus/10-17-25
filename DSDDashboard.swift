@@ -756,8 +756,6 @@ struct DSDDashboard: View {
                 if let allTimeOwnerStats = selectedLeague?.allTimeOwnerStats {
                     Group {
                         StandingsExplorerView(
-                            teams: teams,
-                            myTeamId: selectedTeam?.id,
                             categories: standingsExplorerCategories,
                             ascendingBetter: ascendingBetterStandings,
                             selected: $standingsSelectedCategory,
@@ -1435,6 +1433,24 @@ private func allTimeStandingSort(a: TeamStanding, b: TeamStanding, cache: [Strin
     let nameA = aggA?.latestDisplayName ?? a.name
     let nameB = aggB?.latestDisplayName ?? b.name
     return nameA < nameB
+}
+
+struct FlipTiltModifier: ViewModifier {
+    let progress: Double   // 0.0 = front, 1.0 = back
+    let enabled: Bool
+    let glow: Color
+    let reducedMotion: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .rotation3DEffect(
+                .degrees(enabled ? (180 * progress) : 0),
+                axis: (x: 0, y: 1, z: 0),
+                perspective: 0.9 / 900
+            )
+            .shadow(color: glow.opacity(enabled ? 0.21 : 0.0), radius: enabled ? 12 : 0, y: enabled ? 8 : 0)
+            .animation(reducedMotion ? nil : .easeInOut(duration: 0.25), value: progress)
+    }
 }
 
 struct DSDDashboard_Previews: PreviewProvider {
