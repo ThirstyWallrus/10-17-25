@@ -53,7 +53,7 @@ struct MatchupView: View {
     fileprivate let maxContentWidth: CGFloat = 860
 
     @AppStorage("statDropPersonality") var userStatDropPersonality: StatDropPersonality = .classicESPN
-    @State private var selectedWeek: String = "SZN"
+    @State private var selectedWeek: String = ""
     @State private var isStatDropActive: Bool = false
     @State private var isLoading: Bool = false
 
@@ -84,12 +84,17 @@ struct MatchupView: View {
         return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? currentSeasonTeams
     }
 
+    // --- UPDATED: Week selection logic ---
+    /// Returns the available week choices as ["Week 1", "Week 2", ...] only.
     private var availableWeeks: [String] {
-        guard let team = userTeamStanding else { return ["SZN"] }
+        guard let team = userTeamStanding else { return [] }
+        // Gather all week numbers for which the user's team has scores
         let allWeeks = team.roster.flatMap { $0.weeklyScores }.map { $0.week }
         let uniqueWeeks = Set(allWeeks).sorted()
-        if uniqueWeeks.isEmpty { return ["SZN"] }
-        return uniqueWeeks.map { "Wk \($0)" } + ["SZN"]
+        // If no weeks, return empty
+        if uniqueWeeks.isEmpty { return [] }
+        // Format as ["Week 1", "Week 2", ...]
+        return uniqueWeeks.map { "Week \($0)" }
     }
 
     private var currentSeasonId: String {
@@ -110,12 +115,10 @@ struct MatchupView: View {
               let season = league?.seasons.first(where: { $0.id == appSelection.selectedSeason }) ?? league?.seasons.last else {
             return nil
         }
-        // FIX: Use matchupId as week proxy since SleeperMatchup has no 'week' property.
         let thisWeekMatchupId = self.currentWeekNumber
         let matchupsForWeek = season.matchups?.filter { $0.matchupId == thisWeekMatchupId } ?? []
         for matchup in matchupsForWeek {
             if matchup.rosterId == userRosterId {
-                // Find opponent's rosterId: another team's entry in same matchupId
                 if let opponentEntry = matchupsForWeek.first(where: { $0.rosterId != userRosterId }) {
                     return season.teams.first { $0.id == String(opponentEntry.rosterId) }
                 }
@@ -124,13 +127,19 @@ struct MatchupView: View {
         return nil
     }
 
+    /// Determines the current week number (default for the menu).
+    /// If selectedWeek is empty, defaults to the latest week available.
     private var currentWeekNumber: Int {
-        if selectedWeek == "SZN" {
-            return -1  // Indicate full season
-        } else if let weekNum = Int(selectedWeek.replacingOccurrences(of: "Wk ", with: "")) {
+        // Parse selectedWeek like "Week 1" → 1
+        if let weekNum = Int(selectedWeek.replacingOccurrences(of: "Week ", with: "")), !selectedWeek.isEmpty {
             return weekNum
         }
-        return 4  // Default to current week
+        // If not set, use latest available week
+        if let lastWeek = availableWeeks.last,
+           let lastNum = Int(lastWeek.replacingOccurrences(of: "Week ", with: "")) {
+            return lastNum
+        }
+        return 1 // Fallback
     }
 
     private var userTeam: TeamDisplay? {
@@ -169,14 +178,19 @@ struct MatchupView: View {
         }
         .ignoresSafeArea(edges: .bottom)
         .onAppear {
-            loadCurrentWeek()
+            setDefaultWeekSelection()
             refreshData()
         }
     }
 
-    private func loadCurrentWeek() {
-        // Set to week 4 based on date September 27, 2025 (NFL week 4)
-        selectedWeek = "Wk 4"
+    /// Sets the initial week selection to the current/latest week.
+    private func setDefaultWeekSelection() {
+        // If weeks available, pick the latest (current) week
+        if let lastWeek = availableWeeks.last {
+            selectedWeek = lastWeek
+        } else {
+            selectedWeek = "" // None available
+        }
     }
 
     private func refreshData() {
@@ -186,13 +200,11 @@ struct MatchupView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let updatedLeague):
-                    // Update leagues in appSelection
                     if let index = appSelection.leagues.firstIndex(where: { $0.id == leagueId }) {
                         appSelection.leagues[index] = updatedLeague
                     }
                 case .failure(let error):
                     print("Failed to refresh league data: \(error.localizedDescription)")
-                    // Optionally show error message
                 }
                 isLoading = false
             }
@@ -217,7 +229,6 @@ struct MatchupView: View {
     // --- Menu Geometry ---
     private var selectionMenus: some View {
         VStack(spacing: 10) {
-            // Top Row: League selector stretches full width
             GeometryReader { geo in
                 HStack {
                     leagueMenu
@@ -226,7 +237,6 @@ struct MatchupView: View {
             }
             .frame(height: 50)
 
-            // Bottom Row: Match tab widths to MyTeamView (as if 4 tabs), but space 3 equally
             GeometryReader { geo in
                 let virtualSpacing: CGFloat = menuSpacing * 3
                 let virtualTotal = geo.size.width - virtualSpacing
@@ -252,7 +262,6 @@ struct MatchupView: View {
         Menu {
             ForEach(appSelection.leagues, id: \.id) { lg in
                 Button(lg.name) {
-                    // Centralized selection: update appSelection only
                     appSelection.selectedLeagueId = lg.id
                     appSelection.selectedSeason = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
                     appSelection.userHasManuallySelectedTeam = false
@@ -270,6 +279,7 @@ struct MatchupView: View {
                 Button(sid) {
                     appSelection.selectedSeason = sid
                     appSelection.syncSelectionAfterSeasonChange(username: nil, sleeperUserId: nil)
+                    setDefaultWeekSelection() // Update week selection if season changes
                 }
             }
         } label: {
@@ -277,13 +287,14 @@ struct MatchupView: View {
         }
     }
 
+    /// Week menu now only lists ["Week 1", "Week 2", ...] (no SZN/full season).
     private var weekMenu: some View {
         Menu {
             ForEach(availableWeeks, id: \.self) { wk in
                 Button(wk) { selectedWeek = wk }
             }
         } label: {
-            menuLabel(selectedWeek)
+            menuLabel(selectedWeek.isEmpty ? (availableWeeks.last ?? "Week 1") : selectedWeek)
         }
     }
 
@@ -555,9 +566,7 @@ struct MatchupView: View {
                   let oRid = Int(oppTeam.id) else { continue }
 
             let playoffStart = season.playoffStartWeek ?? 14
-            // FIX: Use matchupId as week proxy
             let h2hMatchups = season.matchups?.filter { $0.matchupId < playoffStart && ($0.rosterId == uRid || $0.rosterId == oRid) } ?? []
-            // Group by matchupId; only process real matchups (both teams present)
             let grouped = Dictionary(grouping: h2hMatchups, by: { $0.matchupId })
             for (_, group) in grouped {
                 guard group.count == 2 else { continue }
@@ -565,7 +574,7 @@ struct MatchupView: View {
                 let uEntry = entries.first(where: { $0.rosterId == uRid })
                 let oEntry = entries.first(where: { $0.rosterId == oRid })
                 guard let uPts = uEntry?.points, let oPts = oEntry?.points else { continue }
-                if uPts == 0 || oPts == 0 { continue }  // Skip if any is 0
+                if uPts == 0 || oPts == 0 { continue }
 
                 let uMax = maxPointsForWeek(team: userTeam, matchupId: uEntry?.matchupId ?? 0)
                 let oMax = maxPointsForWeek(team: oppTeam, matchupId: oEntry?.matchupId ?? 0)
@@ -644,14 +653,12 @@ struct MatchupView: View {
         }
         let actualDef = actualTotal - actualOff
 
-        // Compute max: optimal lineup
         var startingSlots = team.league?.startingLineup ?? []
         if startingSlots.isEmpty, let config = team.lineupConfig, !config.isEmpty {
             startingSlots = expandSlots(config)
         }
         let fixedCounts = fixedSlotCounts(startingSlots: startingSlots)
 
-        // Offensive
         let offPosSet: Set<String> = ["QB", "RB", "WR", "TE", "K"]
         var offPlayerList = team.roster.filter { offPosSet.contains($0.position) }.map {
             (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
@@ -676,7 +683,6 @@ struct MatchupView: View {
         let supCandidates = offPlayerList.filter { supAllowed.contains($0.pos) }.sorted { $0.score > $1.score }
         maxOff += supCandidates.prefix(supFlexCount).reduce(0.0) { $0 + $1.score }
 
-        // Defensive
         let defPosSet: Set<String> = ["DL", "LB", "DB"]
         var defPlayerList = team.roster.filter { defPosSet.contains($0.position) }.map {
             (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
@@ -716,7 +722,6 @@ struct MatchupView: View {
         }
     }
 
-    // FIX: Use matchupId as the week proxy
     private func maxPointsForWeek(team: TeamStanding, matchupId: Int) -> Double {
         let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
             if let score = player.weeklyScores.first(where: { $0.matchup_id == matchupId }) {
@@ -724,14 +729,12 @@ struct MatchupView: View {
             }
         }
 
-        // Compute max: optimal lineup
         var startingSlots = team.league?.startingLineup ?? []
         if startingSlots.isEmpty, let config = team.lineupConfig, !config.isEmpty {
             startingSlots = expandSlots(config)
         }
         let fixedCounts = fixedSlotCounts(startingSlots: startingSlots)
 
-        // Offensive
         let offPosSet: Set<String> = ["QB", "RB", "WR", "TE", "K"]
         var offPlayerList = team.roster.filter { offPosSet.contains($0.position) }.map {
             (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
@@ -756,7 +759,6 @@ struct MatchupView: View {
         let supCandidates = offPlayerList.filter { supAllowed.contains($0.pos) }.sorted { $0.score > $1.score }
         maxOff += supCandidates.prefix(supFlexCount).reduce(0.0) { $0 + $1.score }
 
-        // Defensive
         let defPosSet: Set<String> = ["DL", "LB", "DB"]
         var defPlayerList = team.roster.filter { defPosSet.contains($0.position) }.map {
             (id: $0.id, pos: $0.position, score: playerScores[$0.id] ?? 0.0)
