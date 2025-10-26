@@ -156,7 +156,7 @@ struct MyLeagueView: View {
     /// --- DEBUG PATCH: Print underlying matchup entry and starter points for the selected week/team ---
     private func debugPrintMatchupEntry(team: TeamStanding, week: Int, context: LeagueContext) {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) })
         else {
             print("[DEBUG][MyLeagueView] No matchup entry found for team \(team.name) (id: \(team.id)) in week \(week)")
@@ -230,7 +230,7 @@ struct MyLeagueView: View {
     }
     private func mgmtForWeek(team: TeamStanding, week: Int, context: LeagueContext) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
               let playersPool = myEntry.players,
               let playersPoints = myEntry.players_points

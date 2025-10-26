@@ -147,7 +147,7 @@ final class DSDStatsService {
     // Use only completed weeks for season-long stat aggregations.
     private func filteredPointsFor(team: TeamStanding, league: LeagueData?) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }) else {
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
             return team.pointsFor
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
@@ -161,7 +161,7 @@ final class DSDStatsService {
 
     private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }) else {
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
             return team.maxPointsFor
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
@@ -181,7 +181,7 @@ final class DSDStatsService {
 
     private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }) else {
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
             return team.teamPointsPerWeek
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
