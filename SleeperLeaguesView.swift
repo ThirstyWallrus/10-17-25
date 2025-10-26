@@ -2,11 +2,10 @@
 //  SleeperLeaguesView.swift
 //  DynastyStatDrop
 //
-//  FIXES:
-//   • Uses @EnvironmentObject instead of creating a second @StateObject instance
-//   • Relies on limit helpers via SleeperLeagueManager+Limits.swift
-//   • Adds import slot / limit UI
-//   • Full copy/paste replacement
+//  PATCHED:
+//   • Propagates Sleeper userId and username to AppSelection after import, for correct team selection
+//   • Ensures AppSelection picks user's own team (via ownerId) after importing a league
+//   • No UI/visual changes, preserves all existing logic and continuity
 //
 
 import SwiftUI
@@ -18,6 +17,8 @@ struct SleeperLeaguesView: View {
 
     // Use the shared manager injected at app root (DO NOT create a new instance here).
     @EnvironmentObject private var manager: SleeperLeagueManager
+    @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var appSelection: AppSelection
 
     @State private var username: String = ""
     @State private var isLoading = false
@@ -198,7 +199,31 @@ struct SleeperLeaguesView: View {
         isLoading = true
         errorMessage = nil
         do {
+            // PATCH: Fetch Sleeper userId for correct team selection
+            let sleeperUser = try await manager.fetchUser(username: username)
+            let sleeperUserId = sleeperUser.user_id
+
+            // Persist userId in AuthViewModel if logged in
+            if let dsdUser = authViewModel.currentUsername {
+                UserDefaults.standard.set(sleeperUserId, forKey: "sleeperUserId_\(dsdUser)")
+                authViewModel.sleeperUserId = sleeperUserId
+            }
+
             try await manager.fetchAndImportSingleLeague(leagueId: selectedLeagueId, username: username)
+            // PATCH: Propagate userId (and username) to AppSelection for correct team selection
+            if let dsdUser = authViewModel.currentUsername {
+                appSelection.updateLeagues(
+                    manager.leagues,
+                    username: dsdUser,
+                    sleeperUserId: sleeperUserId
+                )
+                UserDefaults.standard.set(true, forKey: "hasImportedLeague_\(dsdUser)")
+            } else {
+                appSelection.updateLeagues(
+                    manager.leagues,
+                    sleeperUserId: sleeperUserId
+                )
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -4,6 +4,11 @@
 //
 //  Updated to use setActiveUser(username:) now implemented in SleeperLeagueManager.
 //
+//  PATCHED: After importing a Sleeper league,
+//      - AppSelection always selects user's own team using both entered Sleeper username and fetched user_id
+//      - Passed both username and user_id to AppSelection.updateLeagues
+//      - Persists user_id in AuthViewModel for current user
+//      - Guarantees correct team selection after import and sync
 
 import SwiftUI
 
@@ -30,14 +35,11 @@ struct SleeperLeaguesImportView: View {
 
     let menuHeight: CGFloat = 36
     let leagueMenuWidth: CGFloat = 200
-    
-    
+
     private var activeLeagues: [SleeperLeague] {
         let currentYear = Calendar.current.component(.year, from: Date())
         return fetchedLeagues.filter { $0.season == "\(currentYear)" }
     }
-    
-    
 
     var body: some View {
         ZStack {
@@ -81,7 +83,7 @@ struct SleeperLeaguesImportView: View {
         }
         .padding(.top, 32)
     }
-    
+
     private var platformSelectionView: some View {
         VStack(spacing: 8) {
             HStack(spacing: 20) {
@@ -120,7 +122,7 @@ struct SleeperLeaguesImportView: View {
         )
         .padding(.horizontal)
     }
-    
+
     private var comingSoonView: some View {
         Text("More platform access to come...")
             .font(.custom("Phatt", size: 16))
@@ -133,7 +135,7 @@ struct SleeperLeaguesImportView: View {
             )
             .padding(.horizontal)
     }
-    
+
     private var sleeperContentView: some View {
         VStack(spacing: 8) {
             usernameInputView
@@ -236,9 +238,6 @@ struct SleeperLeaguesImportView: View {
         }
     }
 
-    
-    
-    
     private var importedLeaguesList: some View {
         VStack {
             if leagueManager.leagues.isEmpty {
@@ -255,7 +254,7 @@ struct SleeperLeaguesImportView: View {
                                 .foregroundColor(.orange)
                         }
                         .buttonStyle(PlainButtonStyle())
-                        
+
                         VStack(alignment: .leading) {
                             Text(league.name)
                                 .font(.custom("Phatt", size: 18))
@@ -305,34 +304,52 @@ struct SleeperLeaguesImportView: View {
             if let dsdUser = authViewModel.currentUsername {
                 leagueManager.setActiveUser(username: dsdUser)
             }
+            // PATCH: Fetch userId explicitly for correct team selection logic
+            let sleeperUser = try await leagueManager.fetchUser(username: sleeperUsername)
+            let sleeperUserId = sleeperUser.user_id
+
+            // Persist for later matching (AuthViewModel tracks it per current user)
+            if let dsdUser = authViewModel.currentUsername {
+                UserDefaults.standard.set(sleeperUserId, forKey: "sleeperUserId_\(dsdUser)")
+                authViewModel.sleeperUserId = sleeperUserId
+            }
+
+            // Import league using full userId context
             try await leagueManager.fetchAndImportSingleLeague(
                 leagueId: selectedLeagueId,
                 username: sleeperUsername
             )
             UserDefaults.standard.set(sleeperUsername, forKey: "sleeperUsername_for_\(selectedLeagueId)")
             if let dsdUser = authViewModel.currentUsername {
-                appSelection.updateLeagues(leagueManager.leagues, username: dsdUser)
+                appSelection.updateLeagues(
+                    leagueManager.leagues,
+                    username: dsdUser,
+                    sleeperUserId: sleeperUserId
+                )
                 UserDefaults.standard.set(true, forKey: "hasImportedLeague_\(dsdUser)")
             } else {
-                appSelection.updateLeagues(leagueManager.leagues)
+                appSelection.updateLeagues(
+                    leagueManager.leagues,
+                    sleeperUserId: sleeperUserId
+                )
             }
-            
+
             // Call the callback with the new league ID to auto-select it in the dashboard
             if let callback = onLeagueImported {
                 callback(selectedLeagueId)
             }
-            
+
             // Save the league selection to UserDefaults
             let key = "dsd.lastSelectedLeague.\(authViewModel.currentUsername ?? "anon")"
             UserDefaults.standard.set(selectedLeagueId, forKey: key)
-            
+
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
         isLoading = false
     }
-    
+
     private func syncLeague(leagueId: String) async {
         isLoading = true
         errorMessage = nil
@@ -341,14 +358,28 @@ struct SleeperLeaguesImportView: View {
                 if let dsdUser = authViewModel.currentUsername {
                     leagueManager.setActiveUser(username: dsdUser)
                 }
+                // PATCH: Fetch userId for sync
+                let sleeperUser = try await leagueManager.fetchUser(username: username)
+                let sleeperUserId = sleeperUser.user_id
+                if let dsdUser = authViewModel.currentUsername {
+                    UserDefaults.standard.set(sleeperUserId, forKey: "sleeperUserId_\(dsdUser)")
+                    authViewModel.sleeperUserId = sleeperUserId
+                }
                 try await leagueManager.fetchAndImportSingleLeague(
                     leagueId: leagueId,
                     username: username
                 )
                 if let dsdUser = authViewModel.currentUsername {
-                    appSelection.updateLeagues(leagueManager.leagues, username: dsdUser)
+                    appSelection.updateLeagues(
+                        leagueManager.leagues,
+                        username: dsdUser,
+                        sleeperUserId: sleeperUserId
+                    )
                 } else {
-                    appSelection.updateLeagues(leagueManager.leagues)
+                    appSelection.updateLeagues(
+                        leagueManager.leagues,
+                        sleeperUserId: sleeperUserId
+                    )
                 }
             } catch {
                 errorMessage = error.localizedDescription
