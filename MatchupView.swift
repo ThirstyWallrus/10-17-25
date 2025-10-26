@@ -105,22 +105,27 @@ struct MatchupView: View {
         appSelection.selectedTeam
     }
 
-    /// Returns the Sleeper current week from league settings, or 1
-    private var sleeperCurrentWeek: Int {
-        league?.sleeperLeague?.currentWeek ?? 1
+    /// Returns the current week by finding the largest key in matchupsByWeek, or 1 if unavailable
+    private var currentMatchupWeek: Int {
+        guard let league,
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) ?? league.seasons.last,
+              let weeks = season.matchupsByWeek?.keys, !weeks.isEmpty else {
+            return 1
+        }
+        return weeks.max() ?? 1
     }
 
-    /// Determines the currently selected week number, defaults to Sleeper current week if not set
+    /// Determines the currently selected week number, defaults to currentMatchupWeek if not set
     private var currentWeekNumber: Int {
         if let weekNum = Int(selectedWeek.replacingOccurrences(of: "Week ", with: "")), !selectedWeek.isEmpty {
             return weekNum
         }
-        return sleeperCurrentWeek
+        return currentMatchupWeek
     }
 
     // Week selector default logic
     private func setDefaultWeekSelection() {
-        let weekStr = "Week \(sleeperCurrentWeek)"
+        let weekStr = "Week \(currentMatchupWeek)"
         if availableWeeks.contains(weekStr) {
             selectedWeek = weekStr
         } else if let lastWeek = availableWeeks.last {
@@ -140,6 +145,8 @@ struct MatchupView: View {
                     if let index = appSelection.leagues.firstIndex(where: { $0.id == leagueId }) {
                         appSelection.leagues[index] = updatedLeague
                     }
+                    // After refresh, update week selection in case weeks changed
+                    setDefaultWeekSelection()
                 case .failure(let error):
                     print("Failed to refresh league data: \(error.localizedDescription)")
                 }
@@ -417,6 +424,7 @@ struct MatchupView: View {
                     appSelection.selectedSeason = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
                     appSelection.userHasManuallySelectedTeam = false
                     appSelection.syncSelectionAfterLeagueChange(username: nil, sleeperUserId: nil)
+                    setDefaultWeekSelection()
                 }
             }
         } label: {
