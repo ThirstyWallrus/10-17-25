@@ -44,16 +44,17 @@ final class DSDStatsService {
     
     // MARK: Per-season stats (TeamStanding)
     
-    func stat(for team: TeamStanding, type: StatType, league: LeagueData? = nil) -> Any? {
+    // PATCH: Add selectedSeason argument to all calls.
+    func stat(for team: TeamStanding, type: StatType, league: LeagueData? = nil, selectedSeason: String? = nil) -> Any? {
         switch type {
         case .pointsFor:
-            return filteredPointsFor(team: team, league: league)
+            return filteredPointsFor(team: team, league: league, selectedSeason: selectedSeason)
         case .maxPointsFor:
-            return filteredMaxPointsFor(team: team, league: league)
+            return filteredMaxPointsFor(team: team, league: league, selectedSeason: selectedSeason)
         case .managementPercent:
-            return filteredManagementPercent(team: team, league: league)
+            return filteredManagementPercent(team: team, league: league, selectedSeason: selectedSeason)
         case .teamAveragePPW:
-            return filteredTeamAveragePPW(team: team, league: league)
+            return filteredTeamAveragePPW(team: team, league: league, selectedSeason: selectedSeason)
         // ... All other cases unchanged from original code, see below ...
         case .winLossRecord: return team.winLossRecord
         case .playoffRecord: return team.playoffRecord
@@ -144,10 +145,11 @@ final class DSDStatsService {
     
     // MARK: Week-exclusion patch helpers for season aggregations
 
-    // Use only completed weeks for season-long stat aggregations.
-    private func filteredPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
+    // PATCH: Use selectedSeason argument, fallback to league's current season if nil
+    private func filteredPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
+              let seasonId = selectedSeason ?? league.season,
+              let season = league.seasons.first(where: { $0.id == seasonId }) else {
             return team.pointsFor
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
@@ -159,9 +161,10 @@ final class DSDStatsService {
             .reduce(0) { $0 + $1.points }
     }
 
-    private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
+    private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
+              let seasonId = selectedSeason ?? league.season,
+              let season = league.seasons.first(where: { $0.id == seasonId }) else {
             return team.maxPointsFor
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
@@ -173,20 +176,21 @@ final class DSDStatsService {
         return team.maxPointsFor
     }
 
-    private func filteredManagementPercent(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
-        let pf = filteredPointsFor(team: team, league: league)
-        let maxPF = filteredMaxPointsFor(team: team, league: league)
+    private func filteredManagementPercent(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
+        let pf = filteredPointsFor(team: team, league: league, selectedSeason: selectedSeason)
+        let maxPF = filteredMaxPointsFor(team: team, league: league, selectedSeason: selectedSeason)
         return maxPF > 0 ? (pf / maxPF) * 100 : 0
     }
 
-    private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?, selectedSeason: String) -> Double {
+    private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) else {
+              let seasonId = selectedSeason ?? league.season,
+              let season = league.seasons.first(where: { $0.id == seasonId }) else {
             return team.teamPointsPerWeek
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
         let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
-        let pf = filteredPointsFor(team: team, league: league)
+        let pf = filteredPointsFor(team: team, league: league, selectedSeason: selectedSeason)
         return validWeeks.isEmpty ? 0 : pf / Double(validWeeks.count)
     }
     
