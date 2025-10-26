@@ -532,7 +532,7 @@ struct MatchupView: View {
         let seasons: [SeasonData]
         if seasonId == "All Time" {
             seasons = league.seasons
-        } else if let s = league.seasons.first(where: { $0.id == seasonId }) {
+        } else if let s = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) {
             seasons = [s]
         } else {
             return ("0-0", 0.0, 0.0, 0.0, 0.0)

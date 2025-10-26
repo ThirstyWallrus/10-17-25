@@ -2,18 +2,7 @@
 //  ContentView.swift
 //  DynastyStatDrop / DSD
 //
-//  v16 Reviewed & Hardened:
-//   - Preserves original v16 video logic & unified publisher
-//   - Removes forced authViewModel.isLoggedIn = false side-effect (was global & could affect other views)
-//   - Adds optional fallback if video never renders (SIM / unsupported codec)
-//   - Calls deep inspection helpers only when DEBUG_VIDEO is true
-//   - Adds optional "intro only once" gate (commented out)
-//   - Adds optional simulator skip (commented)
-//   - Centralizes showIntroVideo computed
-//
-//  If you no longer need video diagnostics, set DEBUG_VIDEO = false.
-//  Make sure TeaseDSD.mp4 is H.264 8-bit yuv420p for simulator reliability.
-//
+
 
 import SwiftUI
 import AVKit

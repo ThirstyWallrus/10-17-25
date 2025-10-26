@@ -653,7 +653,7 @@ struct MyTeamView: View {
         // PATCH: Use normalized position for all grouping, including weekly player pool
         let normPos = PositionNormalizer.normalize(pos)
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
               let starters = myEntry.starters,
               let playersPoints = myEntry.players_points
@@ -675,7 +675,7 @@ struct MyTeamView: View {
         // PATCH: Use normalized position for count
         let normPos = PositionNormalizer.normalize(pos)
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
               let starters = myEntry.starters
         else { return 0 }
@@ -948,7 +948,7 @@ struct MyTeamView: View {
 
     private func computeWeeklyLineupPointsPatched(team: TeamStanding, week: Int) -> (Double, Double, Double, Double, Double, Double) {
         guard let league = league,
-              let season = league.seasons.first(where: { $0.teams.contains(where: { $0.id == team.id }) }),
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }),
               let myEntry = season.matchupsByWeek?[week]?.first(where: { $0.roster_id == Int(team.id) }),
               let playersPool = myEntry.players,
               let playersPoints = myEntry.players_points

@@ -2,12 +2,7 @@
 //  MyLeagueView.swift
 //  DynastyStatDrop
 //
-//  VISUAL UPGRADE: Adds sorting by record/PF, replaces PA with Grade column using TeamGradeComponents.swift
-//
-//  PATCH: Menu layout now matches MyTeamView — Season | Off/Def | Wks | DSD.
-//         Off/Def context drives standings/grades/stat calculation. Week selector is "Wks" button.
-//         Standings table sorts by PF, then Grade, then team name; grades/stat columns reflect context/week.
-//         All logic is integrated for continuity, no code is truncated or removed.
+
 
 import SwiftUI
 
@@ -356,17 +351,55 @@ struct MyLeagueView: View {
         }
         return dict
     }
+
+    // PATCH: Standings sorting logic — now sorts by Record, then PF, then Rank (when Full Season selected & context is .full)
     private var sortedTeams: [TeamStanding] {
-        let grades = gradeComponents
-        // PF desc, then Grade desc, then name asc
-        return seasonTeams.sorted { a, b in
-            let pfA = pointsFor(team: a)
-            let pfB = pointsFor(team: b)
-            if pfA != pfB { return pfA > pfB }
-            let gradeA = teamGrades[a.name]?.composite ?? 0
-            let gradeB = teamGrades[b.name]?.composite ?? 0
-            if gradeA != gradeB { return gradeA > gradeB }
-            return a.name < b.name
+        // Helper to parse record string into win/loss/tie
+        func parseRecord(_ record: String?) -> (wins: Int, losses: Int, ties: Int) {
+            guard let record = record else { return (0,0,0) }
+            let parts = record.split(separator: "-").map { Int($0) ?? 0 }
+            if parts.count == 3 {
+                return (parts[0], parts[1], parts[2])
+            } else if parts.count == 2 {
+                return (parts[0], parts[1], 0)
+            } else {
+                return (0,0,0)
+            }
+        }
+
+        // Only sort by record if Full Season is selected and context is .full
+        if selectedContext == .full && getSelectedWeekNumber() == nil {
+            return seasonTeams.sorted { a, b in
+                // Record first (win pct), PF second, Rank third
+                let recA = parseRecord(a.winLossRecord)
+                let recB = parseRecord(b.winLossRecord)
+                let gamesA = Double(recA.wins + recA.losses + recA.ties)
+                let gamesB = Double(recB.wins + recB.losses + recB.ties)
+                let winPctA = gamesA > 0 ? (Double(recA.wins) + 0.5 * Double(recA.ties)) / gamesA : 0
+                let winPctB = gamesB > 0 ? (Double(recB.wins) + 0.5 * Double(recB.ties)) / gamesB : 0
+                if winPctA != winPctB { return winPctA > winPctB }
+                // PF second
+                let pfA = pointsFor(team: a)
+                let pfB = pointsFor(team: b)
+                if pfA != pfB { return pfA > pfB }
+                // Rank third (lower rank = higher standing)
+                if a.leagueStanding != b.leagueStanding {
+                    return a.leagueStanding < b.leagueStanding
+                }
+                return a.name < b.name
+            }
+        } else {
+            // Otherwise: PF desc, then Grade desc, then name asc
+            let grades = gradeComponents
+            return seasonTeams.sorted { a, b in
+                let pfA = pointsFor(team: a)
+                let pfB = pointsFor(team: b)
+                if pfA != pfB { return pfA > pfB }
+                let gradeA = teamGrades[a.name]?.composite ?? 0
+                let gradeB = teamGrades[b.name]?.composite ?? 0
+                if gradeA != gradeB { return gradeA > gradeB }
+                return a.name < b.name
+            }
         }
     }
 
