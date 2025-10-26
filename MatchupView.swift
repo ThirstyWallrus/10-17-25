@@ -255,7 +255,8 @@ struct MatchupView: View {
                     // Centralized selection: update appSelection only
                     appSelection.selectedLeagueId = lg.id
                     appSelection.selectedSeason = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
-                    appSelection.selectedTeamId = lg.teams.first?.id
+                    appSelection.userHasManuallySelectedTeam = false
+                    appSelection.syncSelectionAfterLeagueChange(username: nil, sleeperUserId: nil)
                 }
             }
         } label: {

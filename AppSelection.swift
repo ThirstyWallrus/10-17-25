@@ -22,6 +22,9 @@ final class AppSelection: ObservableObject {
     @Published var selectedTeamId: String? = nil      // current season team id
     @Published var selectedSeason: String = ""        // season id or "All Time"
 
+    // New: Track if user has manually selected a team
+    @Published var userHasManuallySelectedTeam: Bool = false
+
     // Helper to get last selected league key
     private func lastSelectedLeagueKey(for username: String) -> String {
         "dsd.lastSelectedLeague.\(username)"
@@ -97,6 +100,7 @@ final class AppSelection: ObservableObject {
             selectedLeagueId = nil
             selectedTeamId = nil
             selectedSeason = ""
+            userHasManuallySelectedTeam = false
             return
         }
 
@@ -114,10 +118,12 @@ final class AppSelection: ObservableObject {
         // Centralized: Pick default season (prefers current year)
         selectedSeason = pickDefaultSeason(league: league)
 
-        // Centralized: Pick default team
-        let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
-        selectedTeamId = teamPick.teamId
-        self.userTeam = teamPick.teamName ?? ""
+        // Centralized: Pick default team, but only if user hasn't manually selected a team
+        if !userHasManuallySelectedTeam {
+            let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
+            selectedTeamId = teamPick.teamId
+            self.userTeam = teamPick.teamName ?? ""
+        }
 
         if let user = username {
             persistLeagueSelection(for: user, leagueId: selectedLeagueId)
@@ -129,20 +135,34 @@ final class AppSelection: ObservableObject {
         guard let league = selectedLeague else {
             selectedSeason = "All Time"
             selectedTeamId = nil
+            userHasManuallySelectedTeam = false
             return
         }
         selectedSeason = pickDefaultSeason(league: league)
-        let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
-        selectedTeamId = teamPick.teamId
-        self.userTeam = teamPick.teamName ?? ""
+        // Only pick default team if user hasn't manually selected one
+        if !userHasManuallySelectedTeam {
+            let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
+            selectedTeamId = teamPick.teamId
+            self.userTeam = teamPick.teamName ?? ""
+        }
     }
 
     /// When season changes, update team selection centrally.
     func syncSelectionAfterSeasonChange(username: String?, sleeperUserId: String?) {
         guard let league = selectedLeague else { return }
-        let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
-        selectedTeamId = teamPick.teamId
-        self.userTeam = teamPick.teamName ?? ""
+        // Only pick default team if user hasn't manually selected one
+        if !userHasManuallySelectedTeam {
+            let teamPick = pickDefaultTeam(league: league, seasonId: selectedSeason, username: username, sleeperUserId: sleeperUserId)
+            selectedTeamId = teamPick.teamId
+            self.userTeam = teamPick.teamName ?? ""
+        }
+    }
+
+    /// Call this whenever the user manually picks a team
+    func setUserSelectedTeam(teamId: String?, teamName: String?) {
+        selectedTeamId = teamId
+        userTeam = teamName ?? ""
+        userHasManuallySelectedTeam = true
     }
 
     func persistLeagueSelection(for username: String, leagueId: String?) {

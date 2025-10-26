@@ -495,6 +495,8 @@ struct DSDDashboard: View {
         }
     }
    
+    // ... (existing imports and struct definition) ...
+
     private var teamMenu: some View {
         Menu {
             let sortedTeams = teams.sorted { teamA, teamB in
@@ -512,7 +514,7 @@ struct DSDDashboard: View {
                     : team.name
                 let isSelected = appSelection.selectedTeamId == team.id
                 Button(displayName) {
-                    appSelection.selectedTeamId = team.id
+                    appSelection.setUserSelectedTeam(teamId: team.id, teamName: displayName)
                 }
                 .foregroundColor(isSelected ? .orange : .white)
                 .background(isSelected ? Color.orange.opacity(0.2) : Color.clear)

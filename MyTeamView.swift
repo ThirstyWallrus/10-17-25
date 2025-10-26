@@ -281,7 +281,7 @@ struct MyTeamView: View {
     private var teamMenu: some View {
         Menu {
             ForEach(seasonTeams, id: \.id) { tm in
-                Button(tm.name) { appSelection.selectedTeamId = tm.id }
+                Button(tm.name) { appSelection.setUserSelectedTeam(teamId: tm.id, teamName: tm.name) }
             }
         } label: {
             menuLabel("Team")
