@@ -147,9 +147,11 @@ final class DSDStatsService {
 
     // PATCH: Use selectedSeason argument, fallback to league's current season if nil
     private func filteredPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
-        guard let league = league,
-              let seasonId = selectedSeason ?? league.season,
-              let season = league.seasons.first(where: { $0.id == seasonId }) else {
+        guard let league = league else {
+            return team.pointsFor
+        }
+        let seasonId = selectedSeason ?? league.season
+        guard let season = league.seasons.first(where: { $0.id == seasonId }) else {
             return team.pointsFor
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
@@ -162,9 +164,11 @@ final class DSDStatsService {
     }
 
     private func filteredMaxPointsFor(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
-        guard let league = league,
-              let seasonId = selectedSeason ?? league.season,
-              let season = league.seasons.first(where: { $0.id == seasonId }) else {
+        guard let league = league else {
+            return team.maxPointsFor
+        }
+        let seasonId = selectedSeason ?? league.season
+        guard let season = league.seasons.first(where: { $0.id == seasonId }) else {
             return team.maxPointsFor
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
@@ -183,9 +187,11 @@ final class DSDStatsService {
     }
 
     private func filteredTeamAveragePPW(team: TeamStanding, league: LeagueData?, selectedSeason: String? = nil) -> Double {
-        guard let league = league,
-              let seasonId = selectedSeason ?? league.season,
-              let season = league.seasons.first(where: { $0.id == seasonId }) else {
+        guard let league = league else {
+            return team.teamPointsPerWeek
+        }
+        let seasonId = selectedSeason ?? league.season
+        guard let season = league.seasons.first(where: { $0.id == seasonId }) else {
             return team.teamPointsPerWeek
         }
         let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
