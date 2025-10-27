@@ -3,6 +3,7 @@
 
 import SwiftUI
 import Foundation
+// No need for import Combine—SwiftUI .onChange suffices for image updates
 
 struct TheDeck: View {
     @EnvironmentObject var appSelection: AppSelection
@@ -29,7 +30,7 @@ struct TheDeck: View {
         let latestTeams: [TeamStanding]
         // Always use selection from AppSelection for season
         if appSelection.selectedSeason == "All Time" || appSelection.selectedSeason.isEmpty {
-            latestTeams = lg.seasons.sorted { $0.id < $1.id }.last?.teams ?? lg.teams
+            latestTeams = lg.seasons.sorted { $0.id < $0.id }.last?.teams ?? lg.teams
         } else {
             latestTeams = lg.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? lg.teams
         }
@@ -269,9 +270,8 @@ struct DeckCard: View {
 
     // Image refresh (observe changes to the franchise image)
     @State private var currentImage: Image = Image("DefaultAvatar")
-    private var imagePublisher: AnyPublisher<UIImage?, Never>? {
-        OwnerAssetStore.shared.imagePublisher(for: model.ownerId)
-    }
+    // Remove Combine publisher members; use @State and .onChange instead
+
     private let catPairs: [(String, (AggregatedOwnerStats) -> Double)] = [
         ("PF", { $0.totalPointsFor }),
         ("PPW", { $0.teamPPW }),
@@ -353,14 +353,12 @@ struct DeckCard: View {
         }
         // Observe franchise image changes for immediate refresh (front face)
         .onAppear {
+            // Use OwnerAssetStore.shared.image(for:) to initialize image on appear
             updateCurrentImage()
         }
-        .onReceive(OwnerAssetStore.shared.imagePublisher(for: model.ownerId) ?? Just(nil).eraseToAnyPublisher()) { uiImage in
-            if let uiImage = uiImage {
-                currentImage = Image(uiImage: uiImage)
-            } else {
-                currentImage = Image("DefaultAvatar")
-            }
+        .onChange(of: OwnerAssetStore.shared.images[model.ownerId]) { _ in
+            // Use .onChange instead of .onReceive for continuity-safe image updates
+            updateCurrentImage() // Updates currentImage whenever published image changes
         }
     }
 
@@ -513,8 +511,9 @@ struct DeckCard: View {
         }
     }
 
-    // Image refresh helper
+    // Image refresh helper — called onAppear and .onChange
     private func updateCurrentImage() {
+        // Use disk-backed OwnerAssetStore image (resolves Combine publisher error)
         let img = OwnerAssetStore.shared.image(for: model.ownerId)
         currentImage = img ?? Image("DefaultAvatar")
     }
@@ -618,6 +617,7 @@ struct DeckCard: View {
     private var rightAccolades: [String] { Array(myAccolades.suffix(myAccolades.count/2)) }
 
     private var profileImage: some View {
+        // Use disk-backed image for profile
         let img = OwnerAssetStore.shared.image(for: model.ownerId) ?? Image("DefaultAvatar")
         return ZStack {
             img
