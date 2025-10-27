@@ -94,10 +94,11 @@ struct MatchupView: View {
 
     private var league: LeagueData? { appSelection.selectedLeague }
 
+    // PATCH: Remove "All Time" from menu. Only show actual seasons.
     private var allSeasonIds: [String] {
-        guard let league else { return ["All Time"] }
+        guard let league else { return [] }
         let sorted = league.seasons.map { $0.id }.sorted(by: >)
-        return ["All Time"] + sorted
+        return sorted
     }
 
     private var currentSeasonTeams: [TeamStanding] {
@@ -106,9 +107,6 @@ struct MatchupView: View {
 
     private var seasonTeams: [TeamStanding] {
         guard let league else { return [] }
-        if appSelection.selectedSeason == "All Time" {
-            return currentSeasonTeams
-        }
         return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? currentSeasonTeams
     }
 
@@ -576,7 +574,7 @@ struct MatchupView: View {
             ForEach(appSelection.leagues, id: \.id) { lg in
                 Button(lg.name) {
                     appSelection.selectedLeagueId = lg.id
-                    appSelection.selectedSeason = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? "All Time"
+                    appSelection.selectedSeason = lg.seasons.sorted { $0.id < $1.id }.last?.id ?? ""
                     appSelection.userHasManuallySelectedTeam = false
                     appSelection.syncSelectionAfterLeagueChange(username: nil, sleeperUserId: nil)
                     setDefaultWeekSelection()
@@ -837,43 +835,45 @@ struct MatchupView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func headToHeadStatsSection(user: TeamStanding, opp: TeamStanding, league: LeagueData) -> some View {
-        let (h2hRecord, avgMgmtFor, avgPF, avgMgmtAgainst, avgPA) = getHeadToHead(userOwnerId: user.ownerId, oppOwnerId: opp.ownerId, league: league, seasonId: appSelection.selectedSeason)
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("Head-to-Head Stats")
-                .font(.headline.bold())
-                .foregroundColor(.orange)
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(user.name)
-                        .foregroundColor(.cyan)
-                        .bold()
-                    statRow("Record vs Opponent", h2hRecord)
-                    statRow("Mgmt % vs Opponent", String(format: "%.2f%%", avgMgmtFor))
-                    statRow("Avg Points/Game vs Opponent", String(format: "%.1f", avgPF))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(opp.name)
-                        .foregroundColor(.yellow)
-                        .bold()
-                    statRow("Record vs You", h2hRecord.reverseRecord)
-                    statRow("Mgmt % vs You", String(format: "%.2f%%", avgMgmtAgainst))
-                    statRow("Avg Points/Game vs You", String(format: "%.1f", avgPA))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                )
-        )
-    }
+    // PATCH: Head-to-Head stats always show ALL-TIME (remove seasonal slice), with debug print.
+       private func headToHeadStatsSection(user: TeamStanding, opp: TeamStanding, league: LeagueData) -> some View {
+           let (h2hRecord, avgMgmtFor, avgPF, avgMgmtAgainst, avgPA) = getHeadToHeadAllTime(userOwnerId: user.ownerId, oppOwnerId: opp.ownerId, league: league)
+           print("DEBUG HeadToHead: userOwnerId=\(user.ownerId), oppOwnerId=\(opp.ownerId), league.allTimeOwnerStats keys=\(league.allTimeOwnerStats?.keys ?? [])")
+           return VStack(alignment: .leading, spacing: 12) {
+               Text("Head-to-Head Stats")
+                   .font(.headline.bold())
+                   .foregroundColor(.orange)
+               HStack(spacing: 16) {
+                   VStack(alignment: .leading, spacing: 4) {
+                       Text(user.name)
+                           .foregroundColor(.cyan)
+                           .bold()
+                       statRow("Record vs Opponent", h2hRecord)
+                       statRow("Mgmt % vs Opponent", String(format: "%.2f%%", avgMgmtFor))
+                       statRow("Avg Points/Game vs Opponent", String(format: "%.1f", avgPF))
+                   }
+                   .frame(maxWidth: .infinity, alignment: .leading)
+                   VStack(alignment: .leading, spacing: 4) {
+                       Text(opp.name)
+                           .foregroundColor(.yellow)
+                           .bold()
+                       statRow("Record vs You", h2hRecord.reverseRecord)
+                       statRow("Mgmt % vs You", String(format: "%.2f%%", avgMgmtAgainst))
+                       statRow("Avg Points/Game vs You", String(format: "%.1f", avgPA))
+                   }
+                   .frame(maxWidth: .infinity, alignment: .leading)
+               }
+           }
+           .padding(16)
+           .background(
+               RoundedRectangle(cornerRadius: 16)
+                   .fill(Color.white.opacity(0.04))
+                   .overlay(
+                       RoundedRectangle(cornerRadius: 16)
+                           .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                   )
+           )
+       }
 
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack {
@@ -887,67 +887,18 @@ struct MatchupView: View {
         .font(.caption)
     }
 
-    // MARK: - Data Extraction Helpers (unchanged, but used above)
+    // MARK: - Data Extraction Helpers
 
-    private func getHeadToHead(userOwnerId: String, oppOwnerId: String, league: LeagueData, seasonId: String) -> (record: String, avgMgmtFor: Double, avgPF: Double, avgMgmtAgainst: Double, avgPA: Double) {
-        let seasons: [SeasonData]
-        if seasonId == "All Time" {
-            seasons = league.seasons
-        } else if let s = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) {
-            seasons = [s]
-        } else {
-            return ("0-0", 0.0, 0.0, 0.0, 0.0)
-        }
+    /// Always use all-time head-to-head stats (from league.allTimeOwnerStats).
+    private func getHeadToHeadAllTime(userOwnerId: String, oppOwnerId: String, league: LeagueData) -> (record: String, avgMgmtFor: Double, avgPF: Double, avgMgmtAgainst: Double, avgPA: Double) {
+           guard let userAgg = league.allTimeOwnerStats?[userOwnerId],
+                 let h2h = userAgg.headToHeadVs[oppOwnerId] else {
+               print("DEBUG getHeadToHeadAllTime: No stats found for userOwnerId=\(userOwnerId), oppOwnerId=\(oppOwnerId)")
+               return ("0-0", 0.0, 0.0, 0.0, 0.0)
+           }
+           return (h2h.record, h2h.avgMgmtFor, h2h.avgPointsFor, h2h.avgMgmtAgainst, h2h.avgPointsAgainst)
+       }
 
-        var wins = 0
-        var losses = 0
-        var ties = 0
-        var pointsFor = 0.0
-        var pointsAgainst = 0.0
-        var sumMgmtFor = 0.0
-        var sumMgmtAgainst = 0.0
-        var games = 0
-
-        for season in seasons {
-            guard let userTeam = season.teams.first(where: { $0.ownerId == userOwnerId }),
-                  let oppTeam = season.teams.first(where: { $0.ownerId == oppOwnerId }),
-                  let uRid = Int(userTeam.id),
-                  let oRid = Int(oppTeam.id) else { continue }
-
-            let playoffStart = season.playoffStartWeek ?? 14
-            let h2hMatchups = season.matchups?.filter { $0.matchupId < playoffStart && ($0.rosterId == uRid || $0.rosterId == oRid) } ?? []
-            let grouped = Dictionary(grouping: h2hMatchups, by: { $0.matchupId })
-            for (_, group) in grouped {
-                guard group.count == 2 else { continue }
-                let entries = group.sorted { ($0.rosterId == uRid ? 0 : 1) < ($1.rosterId == uRid ? 0 : 1) }
-                let uEntry = entries.first(where: { $0.rosterId == uRid })
-                let oEntry = entries.first(where: { $0.rosterId == oRid })
-                guard let uPts = uEntry?.points, let oPts = oEntry?.points else { continue }
-                if uPts == 0 || oPts == 0 { continue }
-
-                let uMax = maxPointsForWeek(team: userTeam, matchupId: uEntry?.matchupId ?? 0)
-                let oMax = maxPointsForWeek(team: oppTeam, matchupId: oEntry?.matchupId ?? 0)
-                let uMgmt = uMax > 0 ? (uPts / uMax) * 100 : 0.0
-                let oMgmt = oMax > 0 ? (oPts / oMax) * 100 : 0.0
-
-                pointsFor += uPts
-                pointsAgainst += oPts
-                sumMgmtFor += uMgmt
-                sumMgmtAgainst += oMgmt
-                games += 1
-                if uPts > oPts { wins += 1 }
-                else if uPts < oPts { losses += 1 }
-                else { ties += 1 }
-            }
-        }
-
-        let record = "\(wins)-\(losses)\(ties > 0 ? "-\(ties)" : "")"
-        let avgMgmtFor = games > 0 ? sumMgmtFor / Double(games) : 0.0
-        let avgPF = games > 0 ? pointsFor / Double(games) : 0.0
-        let avgMgmtAgainst = games > 0 ? sumMgmtAgainst / Double(games) : 0.0
-        let avgPA = games > 0 ? pointsAgainst / Double(games) : 0.0
-        return (record, avgMgmtFor, avgPF, avgMgmtAgainst, avgPA)
-    }
 
     private func positionColor(_ pos: String) -> Color {
         switch pos {
@@ -1039,6 +990,9 @@ struct MatchupView: View {
         startingSlots.reduce(into: [:]) { $0[$1, default: 0] += 1 }
     }
 
+    private func expandSlots(_ config: [String]) -> [String] {
+        config
+    }
     private func expandSlots(_ config: [String: Int]) -> [String] {
         config.flatMap { Array(repeating: $0.key, count: $0.value) }
     }
@@ -1113,4 +1067,3 @@ struct MatchupView: View {
         return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
     }
 }
-
