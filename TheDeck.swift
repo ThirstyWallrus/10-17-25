@@ -433,7 +433,7 @@ struct DeckCard: View {
                 HStack(spacing: 7) {
                     Text("Grade:")
                         .font(.callout.bold())
-                        .foregroundColor(Color("DeckGradeLabel", bundle: nil))
+                        .foregroundColor(Color(.blue))
                     ElectrifiedGrade(grade: statGradeForModel(model: model, allModels: allModels).grade, fontSize: 26)
                         .frame(width: 36, height: 36)
                     Spacer()
@@ -447,11 +447,11 @@ struct DeckCard: View {
                         HStack {
                             Text(label + ":")
                                 .font(.headline)
-                                .foregroundColor(Color("DeckStatLabel", bundle: nil))
+                                .foregroundColor(Color(.blue))
                             Spacer()
                             Text(value)
                                 .font(.custom("Phatt", size: 18).weight(.bold))
-                                .foregroundColor(Color("DeckStatValue", bundle: nil))
+                                .foregroundColor(Color(.orange))
                         }
                     }
                 }
