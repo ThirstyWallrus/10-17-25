@@ -19,6 +19,8 @@ struct WeeklyPositionStats: Identifiable {
     let week: Int
     let score: Double
     let playersPlayed: Int
+    // PATCH: Add displaySlot for strict display logic
+    let displaySlot: String?
 }
 
 struct PositionSeasonStats {
@@ -78,7 +80,10 @@ class StatsViewModel: ObservableObject {
         }
     }
     
-    // PATCHED countedPosition logic: Now uses SlotPositionAssigner global helper for slot-to-position assignment
+    // STRICT LINEUP SLOT DISPLAY & ORDERING PATCH:
+    // - Use SlotPositionAssigner.countedPosition for credited position assignment.
+    // - For display, join duel-designation positions with slashes from altPositions.
+
     private func computePositionWeeklyStats(for team: TeamStanding, in season: SeasonData) -> [Position: [WeeklyPositionStats]] {
         let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
         var statsByPosition: [Position: [WeeklyPositionStats]] = [:]
@@ -89,14 +94,12 @@ class StatsViewModel: ObservableObject {
         if let currentWeek = allWeeks.max(), allWeeks.count > 1 {
             weeksToInclude = allWeeks.filter { $0 != currentWeek }
         }
-        // Defensive fallback: If filtering leaves zero weeks, include all weeks
         if weeksToInclude.isEmpty {
             weeksToInclude = allWeeks
         }
 
         for pos in Position.allCases {
             var weekly: [WeeklyPositionStats] = []
-            // Use weeksToInclude instead of a hardcoded 1...18
             for week in weeksToInclude {
                 guard let weekEntries = season.matchupsByWeek?[week],
                       let rosterId = Int(team.id),
@@ -109,7 +112,7 @@ class StatsViewModel: ObservableObject {
                     let totalPoints = scores.reduce(0, +)
                     let playersPlayed = scores.count
                     if playersPlayed > 0 {
-                        weekly.append(WeeklyPositionStats(week: week, score: totalPoints, playersPlayed: playersPlayed))
+                        weekly.append(WeeklyPositionStats(week: week, score: totalPoints, playersPlayed: playersPlayed, displaySlot: pos.rawValue))
                     }
                     continue
                 }
@@ -117,51 +120,76 @@ class StatsViewModel: ObservableObject {
                 let startedPlayers = team.roster.filter { startedIds.contains($0.id) }
                 let playersPoints = myEntry.players_points ?? [:]
                 
-                let candidates: [MigCandidate] = startedPlayers.map { player in
-                    MigCandidate(basePos: player.position, fantasy: [player.position] + (player.altPositions ?? []), points: playersPoints[player.id] ?? 0)
-                }
-                
+                // STRICT PATCH: Build displaySlot using SlotPositionAssigner and duel-designation logic
                 let slots = expandSlots(lineupConfig: lineupConfig)
-                
-                var assignment: [MigCandidate: String] = [:]
+                var assignment: [Player: String] = [:]
                 var availableSlots = slots
-                
-                let sortedCandidates = candidates.sorted {
+
+                let sortedStarters = startedPlayers.sorted {
                     eligibleSlots(for: $0, availableSlots).count < eligibleSlots(for: $1, availableSlots).count
                 }
-                
-                for c in sortedCandidates {
-                    let elig = eligibleSlots(for: c, availableSlots)
+                for p in sortedStarters {
+                    let elig = eligibleSlots(for: p, availableSlots)
                     if elig.isEmpty { continue }
-                    
                     let specific = elig.filter { ["QB","RB","WR","TE","K","DL","LB","DB"].contains($0.uppercased()) }
-                    let chosen = specific.first ?? elig.first!
-                    
-                    assignment[c] = chosen
-                    
-                    if let idx = availableSlots.firstIndex(of: chosen) {
+                    let chosenSlot = specific.first ?? elig.first!
+                    assignment[p] = chosenSlot
+                    if let idx = availableSlots.firstIndex(of: chosenSlot) {
                         availableSlots.remove(at: idx)
                     }
                 }
-                
-                var posMap: [String: (score: Double, played: Int)] = [:]
-                
-                for (c, slot) in assignment {
-                    // PATCH: Use SlotPositionAssigner global helper instead of local countedPosition
-                    let counted = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
-                    var current = posMap[counted, default: (0, 0)]
-                    current.score += c.points
-                    current.played += 1
-                    posMap[counted] = current
+
+                // For STRICT DISPLAY: Get display name for each assignment
+                var posMap: [String: (score: Double, played: Int, displaySlots: [String])] = [:]
+                for (player, slot) in assignment {
+                    let candidatePositions = ([player.position] + (player.altPositions ?? []))
+                    let basePosition = player.position
+                    let credited = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: candidatePositions, base: basePosition)
+
+                    // For display:
+                    let displaySlot: String = {
+                        let normalizedSlot = PositionNormalizer.normalize(slot)
+                        let isFlex = SlotPositionAssigner.offensiveFlexSlots.contains(slot.uppercased()) || SlotPositionAssigner.idpFlexSlots.contains(slot.uppercased()) || slot.uppercased().contains("IDP")
+                        let duelPositions = candidatePositions.map { PositionNormalizer.normalize($0) }
+                        if isFlex {
+                            // Flex [POSITION(S)] (show eligible positions for this player in this slot)
+                            let flexLabel = "Flex " + duelPositions.joined(separator: "/")
+                            return flexLabel
+                        }
+                        if duelPositions.count > 1 {
+                            // Duel-designation: join all eligible positions
+                            return duelPositions.joined(separator: "/")
+                        }
+                        // Strict slot: just show the position
+                        return normalizedSlot
+                    }()
+
+                    // Only accumulate if credited position matches current loop position
+                    if credited == pos.rawValue {
+                        let pts = playersPoints[player.id] ?? 0
+                        var current = posMap[credited, default: (0, 0, [])]
+                        current.score += pts
+                        current.played += 1
+                        current.displaySlots.append(displaySlot)
+                        posMap[credited] = current
+                    }
                 }
-                
-                if let (score, played) = posMap[pos.rawValue], played > 0 {
-                    weekly.append(WeeklyPositionStats(week: week, score: score, playersPlayed: played))
+
+                // For display, join displaySlots by ", " if multiple
+                if let (score, played, displaySlots) = posMap[pos.rawValue], played > 0 {
+                    let uniqueDisplay = Array(Set(displaySlots))
+                    weekly.append(
+                        WeeklyPositionStats(
+                            week: week,
+                            score: score,
+                            playersPlayed: played,
+                            displaySlot: uniqueDisplay.joined(separator: ", ")
+                        )
+                    )
                 }
             }
             statsByPosition[pos] = weekly
         }
-        
         return statsByPosition
     }
     
@@ -174,6 +202,7 @@ class StatsViewModel: ObservableObject {
         "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX"
     ]
     
+    // Allowed positions for a slot
     private func allowedPositions(for slot: String) -> Set<String> {
         switch slot.uppercased() {
         case "QB","RB","WR","TE","K","DL","LB","DB": return [slot.uppercased()]
@@ -186,50 +215,12 @@ class StatsViewModel: ObservableObject {
         }
     }
     
-    private func isIDPFlex(_ slot: String) -> Bool {
-        let s = slot.uppercased()
-        return s.contains("IDP") && s != "DL" && s != "LB" && s != "DB"
-    }
-    
-    // PATCHED countedPosition: The local version is no longer used; replaced above with SlotPositionAssigner global helper.
-    // (Retained for continuity, but not called anywhere.)
-    private func countedPosition(for slot: String, candidatePositions: [String], base: String) -> String {
-        let s = slot.uppercased()
-        let strict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
-        let offensiveFlexes: Set<String> = [
-            "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE","WRRBTEFLEX"
-        ]
-        let idpFlexes: Set<String> = [
-            "IDPFLEX","IDP_FLEX","DFLEX","DL_LB_DB","DL_LB","LB_DB","DL_DB","DP","D","DEF"
-        ]
-        if strict.contains(s) {
-            // Player is credited as the slot they were started in
-            return s
+    private func eligibleSlots(for player: Player, _ slots: [String]) -> [String] {
+        let candidatePositions = ([player.position] + (player.altPositions ?? [])).map { PositionNormalizer.normalize($0) }
+        return slots.filter { slot in
+            let allowed = allowedPositions(for: slot)
+            return !allowed.intersection(Set(candidatePositions)).isEmpty
         }
-        if offensiveFlexes.contains(s) {
-            // Credit as first eligible position (e.g., LB/DL in FLEX -> "LB")
-            return candidatePositions.first ?? base
-        }
-        if idpFlexes.contains(s) || s.contains("IDP") {
-            // Credit as first eligible position for IDP flexes
-            return candidatePositions.first ?? base
-        }
-        // Fallback
-        return candidatePositions.first ?? base
-    }
-    
-    private struct MigCandidate: Hashable {
-        let basePos: String
-        let fantasy: [String]
-        let points: Double
-    }
-    
-    private func isEligible(c: MigCandidate, allowed: Set<String>) -> Bool {
-        !allowed.intersection(Set(c.fantasy)).isEmpty
-    }
-    
-    private func eligibleSlots(for c: MigCandidate, _ slots: [String]) -> [String] {
-        slots.filter { isEligible(c: c, allowed: allowedPositions(for: $0)) }
     }
     
     private func expandSlots(lineupConfig: [String:Int]) -> [String] {
@@ -264,6 +255,9 @@ struct PositionStatsView: View {
                             Spacer()
                             Text("Players")
                                 .frame(width: 60, alignment: .center)
+                            Spacer()
+                            Text("Slot")
+                                .frame(width: 120, alignment: .leading)
                         }
                         .font(.subheadline)
                         .foregroundColor(.gray)
@@ -278,6 +272,9 @@ struct PositionStatsView: View {
                                 Spacer()
                                 Text("\(stat.playersPlayed)")
                                     .frame(width: 60, alignment: .center)
+                                Spacer()
+                                Text(stat.displaySlot ?? position.rawValue)
+                                    .frame(width: 120, alignment: .leading)
                             }
                             .font(.body)
                         }
@@ -292,6 +289,9 @@ struct PositionStatsView: View {
                             Spacer()
                             Text("\(seasonStats.totalPlayersPlayed)")
                                 .frame(width: 60, alignment: .center)
+                            Spacer()
+                            Text("")
+                                .frame(width: 120)
                         }
 
                         HStack {
@@ -304,6 +304,9 @@ struct PositionStatsView: View {
                             Spacer()
                             Text(String(format: "%.1f", seasonStats.averagePlayersPerWeek))
                                 .frame(width: 60, alignment: .center)
+                            Spacer()
+                            Text("")
+                                .frame(width: 120)
                         }
 
                         HStack {
@@ -316,6 +319,9 @@ struct PositionStatsView: View {
                             Spacer()
                             Text("")
                                 .frame(width: 60)
+                            Spacer()
+                            Text("")
+                                .frame(width: 120)
                         }
                     }
                 }

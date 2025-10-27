@@ -60,8 +60,10 @@ struct MatchupView: View {
 
     struct LineupPlayer: Identifiable {
         let id: String
+        let displaySlot: String // Display slot name (patched for strict rules)
+        let creditedPosition: String // For ordering
         let position: String
-        let slot: String // The lineup slot played (e.g. "Flex WR", "DL", etc)
+        let slot: String // Raw slot played (for reference)
         let points: Double
         let isBench: Bool
     }
@@ -205,20 +207,16 @@ struct MatchupView: View {
 
     // MARK: - Lineup & Bench Sorting Helpers
 
-    // Slot orders for rendering (not for display, just for sort order)
-    private var slotRenderOrder: [String] {
-        // QB, RB, WR, TE, [off flexes], K, DL, LB, DB, [def flexes]
-        [
-            "QB", "RB", "WR", "TE",
-            "OFF_FLEX", // marker for offensive flexes
-            "K",
-            "DL", "LB", "DB",
-            "DEF_FLEX" // marker for defensive flexes
-        ]
-    }
-    private var benchOrder: [String] {
-        ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
-    }
+    // Strict display order for lineup
+    private let strictDisplayOrder: [String] = [
+        "QB", "RB", "WR", "TE",
+        "OFF_FLEX", // marker for offensive flexes
+        "K",
+        "DL", "LB", "DB",
+        "DEF_FLEX" // marker for defensive flexes
+    ]
+
+    private let benchOrder: [String] = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
 
     /// Returns the full ordered lineup for a team for a given week, as shown in the fantasy platform.
     private func orderedLineup(for team: TeamStanding, week: Int) -> [LineupPlayer] {
@@ -264,19 +262,24 @@ struct MatchupView: View {
             slotAssignments.append((slot: "", player: player))
         }
 
-        // Compose display slots per assignment
-        var strictSlots: [LineupPlayer] = []
-        var offensiveFlexes: [LineupPlayer] = []
+        // Compose display slots per assignment (STRICT RULES PATCHED)
+        var qbSlots: [LineupPlayer] = []
+        var rbSlots: [LineupPlayer] = []
+        var wrSlots: [LineupPlayer] = []
+        var teSlots: [LineupPlayer] = []
+        var offensiveFlexSlotsArr: [LineupPlayer] = []
         var kickerSlots: [LineupPlayer] = []
-        var defensiveStrictSlots: [LineupPlayer] = []
-        var defensiveFlexes: [LineupPlayer] = []
+        var dlSlots: [LineupPlayer] = []
+        var lbSlots: [LineupPlayer] = []
+        var dbSlots: [LineupPlayer] = []
+        var defensiveFlexSlotsArr: [LineupPlayer] = []
 
         for (slot, player) in slotAssignments {
             guard let player = player else { continue }
             let normPos = PositionNormalizer.normalize(player.position)
             let normAlts = (player.altPositions ?? []).map { PositionNormalizer.normalize($0) }
             let eligiblePositions: [String] = {
-                // If dual-designated, use both positions, else just main
+                // If duel-designated, use all altPositions (preserved order), else just main
                 if let alt = player.altPositions, !alt.isEmpty {
                     let all = ([player.position] + alt).map { PositionNormalizer.normalize($0) }
                     // Remove duplicates and keep order
@@ -286,84 +289,79 @@ struct MatchupView: View {
                 }
             }()
 
-            // Determine display slot name
+            // Determine credited position for display and ordering
+            let creditedPosition = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: eligiblePositions, base: player.position)
+
+            // Determine display slot name (STRICT PATCH)
             let displaySlot: String = {
-                // Offensive Flex
                 if isOffensiveFlexSlot(slot) {
+                    // Offensive flex: display "Flex " + eligible positions
+                    let flexPositions = eligiblePositions.filter { ["QB","RB","WR","TE"].contains($0) }
+                    let joined = flexPositions.isEmpty ? eligiblePositions.joined(separator: "/") : flexPositions.joined(separator: "/")
+                    return "Flex " + joined
+                } else if isDefensiveFlexSlot(slot) {
+                    // Defensive flex: display "Flex " + eligible positions
+                    let flexPositions = eligiblePositions.filter { ["DL","LB","DB"].contains($0) }
+                    let joined = flexPositions.isEmpty ? eligiblePositions.joined(separator: "/") : flexPositions.joined(separator: "/")
+                    return "Flex " + joined
+                } else if ["QB","RB","WR","TE","K","DL","LB","DB"].contains(slot.uppercased()) {
+                    // Strict slot: duel-designated, show all eligible positions joined by "/"
                     if eligiblePositions.count > 1 {
-                        return "Flex " + eligiblePositions.joined(separator: "/")
+                        return eligiblePositions.joined(separator: "/")
                     } else {
-                        return "Flex \(normPos)"
+                        return normPos
                     }
-                }
-                // Defensive Flex
-                else if isDefensiveFlexSlot(slot) {
-                    if eligiblePositions.count > 1 {
-                        return "Flex " + eligiblePositions.joined(separator: "/")
-                    } else if let dd = duelDesignation(for: slot) {
-                        return "Flex \(dd)"
-                    } else {
-                        return "Flex \(normPos)"
-                    }
-                }
-                // Strict slot (DL/LB/DB, QB/RB/WR/TE/K)
-                else if ["DL", "LB", "DB", "QB", "RB", "WR", "TE", "K"].contains(slot.uppercased()) {
+                } else {
+                    // Fallback
                     if eligiblePositions.count > 1 {
                         return eligiblePositions.joined(separator: "/")
                     } else {
                         return normPos
                     }
                 }
-                // Fallback
-                else {
-                    return normPos
-                }
             }()
 
             let playerObj = LineupPlayer(
                 id: player.id,
+                displaySlot: displaySlot,
+                creditedPosition: creditedPosition,
                 position: normPos,
-                slot: displaySlot,
+                slot: slot,
                 points: playerScores[player.id] ?? 0,
                 isBench: false
             )
 
-            // Assign to correct group for ordering
-            if ["QB", "RB", "WR", "TE"].contains(slot.uppercased()) {
-                strictSlots.append(playerObj)
-            } else if isOffensiveFlexSlot(slot) {
-                offensiveFlexes.append(playerObj)
-            } else if slot.uppercased() == "K" {
-                kickerSlots.append(playerObj)
-            } else if ["DL", "LB", "DB"].contains(slot.uppercased()) {
-                defensiveStrictSlots.append(playerObj)
-            } else if isDefensiveFlexSlot(slot) {
-                defensiveFlexes.append(playerObj)
-            } else {
-                // Fallback: group by position
-                if ["QB", "RB", "WR", "TE"].contains(normPos) {
-                    strictSlots.append(playerObj)
-                } else if ["DL", "LB", "DB"].contains(normPos) {
-                    defensiveStrictSlots.append(playerObj)
+            // Assign to correct group for ordering (STRICT PATCH)
+            switch creditedPosition {
+            case "QB": qbSlots.append(playerObj)
+            case "RB": rbSlots.append(playerObj)
+            case "WR": wrSlots.append(playerObj)
+            case "TE": teSlots.append(playerObj)
+            case "K": kickerSlots.append(playerObj)
+            case "DL": dlSlots.append(playerObj)
+            case "LB": lbSlots.append(playerObj)
+            case "DB": dbSlots.append(playerObj)
+            default:
+                if isOffensiveFlexSlot(slot) {
+                    offensiveFlexSlotsArr.append(playerObj)
+                } else if isDefensiveFlexSlot(slot) {
+                    defensiveFlexSlotsArr.append(playerObj)
                 }
             }
         }
 
-        // Final ordering: strict offense, offensive flexes after TE, kicker, strict defense, defensive flexes after DB
+        // Final ordering: QB, RB, WR, TE, all offensive flex slots, K, DL, LB, DB, all defensive flex slots
         var ordered: [LineupPlayer] = []
-        // QB, RB, WR, TE
-        ordered.append(contentsOf: strictSlots.filter { ["QB","RB","WR","TE"].contains($0.position) })
-        // Offensive Flexes
-        ordered.append(contentsOf: offensiveFlexes)
-        // Kicker
+        ordered.append(contentsOf: qbSlots)
+        ordered.append(contentsOf: rbSlots)
+        ordered.append(contentsOf: wrSlots)
+        ordered.append(contentsOf: teSlots)
+        ordered.append(contentsOf: offensiveFlexSlotsArr)
         ordered.append(contentsOf: kickerSlots)
-        // Defensive strict slots DL, LB, DB (in order)
-        let defOrder = ["DL", "LB", "DB"]
-        for pos in defOrder {
-            ordered.append(contentsOf: defensiveStrictSlots.filter { $0.position == pos })
-        }
-        // Defensive Flexes
-        ordered.append(contentsOf: defensiveFlexes)
+        ordered.append(contentsOf: dlSlots)
+        ordered.append(contentsOf: lbSlots)
+        ordered.append(contentsOf: dbSlots)
+        ordered.append(contentsOf: defensiveFlexSlotsArr)
 
         return ordered
     }
@@ -379,8 +377,19 @@ struct MatchupView: View {
         let benchPlayers = team.roster.filter { !starters.contains($0.id) }
         var bench: [LineupPlayer] = benchPlayers.map { player in
             let normPos = PositionNormalizer.normalize(player.position)
+            let eligiblePositions: [String] = {
+                if let alt = player.altPositions, !alt.isEmpty {
+                    let all = ([player.position] + alt).map { PositionNormalizer.normalize($0) }
+                    return Array(NSOrderedSet(array: all)) as? [String] ?? [normPos]
+                } else {
+                    return [normPos]
+                }
+            }()
+            let displaySlot = eligiblePositions.count > 1 ? eligiblePositions.joined(separator: "/") : normPos
             return LineupPlayer(
                 id: player.id,
+                displaySlot: displaySlot,
+                creditedPosition: normPos,
                 position: normPos,
                 slot: normPos,
                 points: playerScores[player.id] ?? 0,
@@ -389,8 +398,8 @@ struct MatchupView: View {
         }
         // Sort bench by position order
         bench.sort { a, b in
-            let ai = benchOrder.firstIndex(of: a.position) ?? 99
-            let bi = benchOrder.firstIndex(of: b.position) ?? 99
+            let ai = benchOrder.firstIndex(of: a.creditedPosition) ?? 99
+            let bi = benchOrder.firstIndex(of: b.creditedPosition) ?? 99
             return ai < bi
         }
         return bench
@@ -709,8 +718,8 @@ struct MatchupView: View {
             if let lineup = team?.lineup {
                 ForEach(lineup) { player in
                     HStack {
-                        Text(player.slot)
-                            .foregroundColor(positionColor(player.position))
+                        Text(player.displaySlot)
+                            .foregroundColor(positionColor(player.creditedPosition))
                         Spacer()
                         Text(String(format: "%.1f", player.points))
                             .foregroundColor(.green)
@@ -749,8 +758,8 @@ struct MatchupView: View {
             if let bench = team?.bench {
                 ForEach(bench) { player in
                     HStack {
-                        Text(player.position)
-                            .foregroundColor(positionColor(player.position))
+                        Text(player.displaySlot)
+                            .foregroundColor(positionColor(player.creditedPosition))
                         Spacer()
                         Text(String(format: "%.1f", player.points))
                             .foregroundColor(.green.opacity(0.7))

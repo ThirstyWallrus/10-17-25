@@ -26,7 +26,7 @@ import Foundation
 final class DataMigrationManager: ObservableObject {
 
     private let dataVersionKey = "dsd.data.version"
-    private let currentDataVersion = 5   // UPDATED to 4 for extended starter / transaction metrics
+    private let currentDataVersion = 5   // UPDATED to 5 for extended starter / transaction metrics
 
     private let offensivePositions: Set<String> = ["QB","RB","WR","TE","K"]
     private let defensivePositions: Set<String> = ["DL","LB","DB"]
@@ -208,23 +208,10 @@ final class DataMigrationManager: ObservableObject {
                 for i in 0..<starters.count {
                     let pid = starters[i]
                     let pts = starterPoints[pid] ?? 0.0
-                    // --- PATCH: Normalize position for defensive stat split ---
-                    let normalized = PositionNormalizer.normalize(slots[i])
-                    if isOffensiveSlot(slots[i]) {
-                        off += pts
-                    } else if normalized == "DL" || normalized == "LB" || normalized == "DB" {
-                        defPF += pts
-                    }
-                }
-            } else {
-                // Fallback to position-based
-                for i in 0..<starters.count {
-                    let pid = starters[i]
-                    let pts = starterPoints[pid] ?? 0.0
-                    // FIX: We want a RawSleeperPlayer? here. Use playerCache[pid] if available, else map from old.roster
+
+                    // --- PATCH: Use SlotPositionAssigner.countedPosition for credited position ---
                     let player: RawSleeperPlayer? = playerCache[pid] ?? {
                         if let p = old.roster.first(where: { $0.id == pid }) {
-                            // Map Player to RawSleeperPlayer (approximate: position is present)
                             return RawSleeperPlayer(
                                 player_id: p.id,
                                 full_name: nil,
@@ -234,19 +221,48 @@ final class DataMigrationManager: ObservableObject {
                         }
                         return nil
                     }()
-                    if let pos = player?.position?.uppercased() {
-                        let normalized = PositionNormalizer.normalize(pos)
-                        if offensivePositions.contains(normalized) {
-                            off += pts
-                        } else if defensivePositions.contains(normalized) {
-                            defPF += pts
-                        }
-                        // --- PATCH: Use normalized position for stat groupings ---
-                        posPPW[normalized, default: 0] += pts
-                        indivPPW[normalized, default: 0] += pts
-                        posCounts[normalized, default: 0] += 1
-                        indivCounts[normalized, default: 0] += 1
+                    let candidatePositions = ([player?.position ?? ""] + (player?.fantasy_positions ?? [])).filter { !$0.isEmpty }
+                    let creditedPosition = SlotPositionAssigner.countedPosition(for: slots[i], candidatePositions: candidatePositions, base: player?.position ?? "")
+
+                    if offensivePositions.contains(creditedPosition) {
+                        off += pts
+                    } else if defensivePositions.contains(creditedPosition) {
+                        defPF += pts
                     }
+                    // --- PATCH: Use normalized position for stat groupings ---
+                    posPPW[creditedPosition, default: 0] += pts
+                    indivPPW[creditedPosition, default: 0] += pts
+                    posCounts[creditedPosition, default: 0] += 1
+                    indivCounts[creditedPosition, default: 0] += 1
+                }
+            } else {
+                // Fallback to position-based
+                for i in 0..<starters.count {
+                    let pid = starters[i]
+                    let pts = starterPoints[pid] ?? 0.0
+                    let player: RawSleeperPlayer? = playerCache[pid] ?? {
+                        if let p = old.roster.first(where: { $0.id == pid }) {
+                            return RawSleeperPlayer(
+                                player_id: p.id,
+                                full_name: nil,
+                                position: p.position,
+                                fantasy_positions: p.altPositions
+                            )
+                        }
+                        return nil
+                    }()
+                    let candidatePositions = ([player?.position ?? ""] + (player?.fantasy_positions ?? [])).filter { !$0.isEmpty }
+                    let creditedPosition = SlotPositionAssigner.countedPosition(for: player?.position ?? "", candidatePositions: candidatePositions, base: player?.position ?? "")
+
+                    if offensivePositions.contains(creditedPosition) {
+                        off += pts
+                    } else if defensivePositions.contains(creditedPosition) {
+                        defPF += pts
+                    }
+                    posPPW[creditedPosition, default: 0] += pts
+                    indivPPW[creditedPosition, default: 0] += pts
+                    posCounts[creditedPosition, default: 0] += 1
+                    indivCounts[creditedPosition, default: 0] += 1
                 }
             }
             totalOffPF += off
@@ -269,11 +285,14 @@ final class DataMigrationManager: ObservableObject {
                     .max { $0.points < $1.points }
                 guard let cand = pick else { continue }
                 used.insert(cand)
-                let normalized = PositionNormalizer.normalize(slot)
+                // --- PATCH: Use SlotPositionAssigner.countedPosition for credited position ---
+                let candidatePositions = [cand.basePos] + cand.fantasy
+                let creditedPosition = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: candidatePositions, base: cand.basePos)
+
                 weekMax += cand.points
-                if isOffensiveSlot(slot) {
+                if offensivePositions.contains(creditedPosition) {
                     weekMaxOff += cand.points
-                } else if normalized == "DL" || normalized == "LB" || normalized == "DB" {
+                } else if defensivePositions.contains(creditedPosition) {
                     weekMaxDef += cand.points
                 }
             }
@@ -302,11 +321,12 @@ final class DataMigrationManager: ObservableObject {
                     }
                 }
                 
-                // PATCH: Use global SlotPositionAssigner for slot assignment
+                // PATCH: Use SlotPositionAssigner for slot assignment
                 for (c, slot) in assignment {
+                    let candidatePositions = [c.basePos] + c.fantasy
                     let counted = SlotPositionAssigner.countedPosition(
                         for: slot,
-                        candidatePositions: [c.basePos] + c.fantasy,
+                        candidatePositions: candidatePositions,
                         base: c.basePos
                     )
                     let normalized = PositionNormalizer.normalize(counted)
@@ -401,32 +421,12 @@ final class DataMigrationManager: ObservableObject {
 
     // PATCHED: Use slot assignment rules for duel-designated/flex positions
     // NOTE: This local countedPosition is now deprecated for slot-to-position assignment, but left for continuity.
-    private func countedPosition(for slot: String,
-                                 candidatePositions: [String],
-                                 base: String) -> String {
-        let s = slot.uppercased()
-        let strict = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
-        let offensiveFlexes: Set<String> = [
-            "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE","WRRBTEFLEX"
-        ]
-        let idpFlexes: Set<String> = [
-            "IDPFLEX","IDP_FLEX","DFLEX","DL_LB_DB","DL_LB","LB_DB","DL_DB","DP","D","DEF"
-        ]
-        if strict.contains(s) {
-            // Player is credited as the slot they were started in
-            return s
-        }
-        if offensiveFlexes.contains(s) {
-            // Credit as first eligible position (e.g., LB/DL in FLEX -> "LB")
-            return candidatePositions.first ?? base
-        }
-        if idpFlexes.contains(s) || s.contains("IDP") {
-            // Credit as first eligible position for IDP flexes
-            return candidatePositions.first ?? base
-        }
-        // Fallback
-        return candidatePositions.first ?? base
-    }
+    // private func countedPosition(for slot: String,
+    //                              candidatePositions: [String],
+    //                              base: String) -> String {
+    //     // Deprecated, use SlotPositionAssigner.countedPosition instead!
+    //     return SlotPositionAssigner.countedPosition(for: slot, candidatePositions: candidatePositions, base: base)
+    // }
 
     private struct MigCandidate: Hashable {
         let basePos: String
