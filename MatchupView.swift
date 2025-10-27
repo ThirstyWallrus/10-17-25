@@ -24,7 +24,32 @@ private let offensiveFlexSlots: Set<String> = [
 ]
 private let regularFlexSlots: Set<String> = ["FLEX", "WRRB", "WRRBTE", "WRRB_TE", "RBWR", "RBWRTE"]
 private let superFlexSlots: Set<String> = ["SUPER_FLEX", "QBRBWRTE", "QBRBWR", "QBSF", "SFLX"]
-private let idpFlexSlots: Set<String> = ["IDP"]
+private let idpFlexSlots: Set<String> = [
+    "IDP", "IDPFLEX", "IDP_FLEX", "DFLEX", "DL_LB_DB", "DL_LB", "LB_DB", "DL_DB"
+]
+
+// Helper to determine if slot is offensive flex
+private func isOffensiveFlexSlot(_ slot: String) -> Bool {
+    offensiveFlexSlots.contains(slot.uppercased())
+}
+
+// Helper to determine if slot is defensive flex
+private func isDefensiveFlexSlot(_ slot: String) -> Bool {
+    let s = slot.uppercased()
+    return idpFlexSlots.contains(s) || (s.contains("IDP") && s != "DL" && s != "LB" && s != "DB")
+}
+
+// Helper to get duel designation for a flex slot
+private func duelDesignation(for slot: String) -> String? {
+    let s = slot.uppercased()
+    // Example: DL_LB => DL/LB, LB_DB => LB/DB, DL_DB => DL/DB
+    if s == "DL_LB" { return "DL/LB" }
+    if s == "LB_DB" { return "LB/DB" }
+    if s == "DL_DB" { return "DL/DB" }
+    if s == "DL_LB_DB" { return "DL/LB/DB" }
+    // Add any other custom duel slots here
+    return nil
+}
 
 struct MatchupView: View {
     @EnvironmentObject var leagueManager: SleeperLeagueManager
@@ -180,14 +205,15 @@ struct MatchupView: View {
 
     // MARK: - Lineup & Bench Sorting Helpers
 
-    // Lineup slot sort order for Sleeper
-    private var sleeperSlotOrder: [String] {
-        // QB, RB, WR, TE, FLEX (reg), FLEX (wr/rb/te), SUPER FLEX, K, DL, LB, DB, IDPFLEX
+    // Slot orders for rendering (not for display, just for sort order)
+    private var slotRenderOrder: [String] {
+        // QB, RB, WR, TE, [off flexes], K, DL, LB, DB, [def flexes]
         [
             "QB", "RB", "WR", "TE",
-            "FLEX", "WRRB", "WRRBTE", "WRRB_TE", "RBWR", "RBWRTE",
-            "SUPER_FLEX", "QBRBWRTE", "QBRBWR", "QBSF", "SFLX",
-            "K", "DL", "LB", "DB", "IDP"
+            "OFF_FLEX", // marker for offensive flexes
+            "K",
+            "DL", "LB", "DB",
+            "DEF_FLEX" // marker for defensive flexes
         ]
     }
     private var benchOrder: [String] {
@@ -198,25 +224,24 @@ struct MatchupView: View {
     private func orderedLineup(for team: TeamStanding, week: Int) -> [LineupPlayer] {
         // Extract starting lineup slots for the league
         let slots = team.league?.startingLineup ?? []
-        let slotOrder = sleeperSlotOrder
         let starters = team.actualStartersByWeek?[week] ?? []
-        let starterSet = Set(starters)
         let playerScores = team.roster.reduce(into: [String: Double]()) { dict, player in
             if let score = player.weeklyScores.first(where: { $0.week == week }) {
                 dict[player.id] = score.points_half_ppr ?? score.points
             }
         }
-        // Map starters to slots in order; fallback to matching by position and flex rules
         var lineup: [LineupPlayer] = []
         var usedPlayers: Set<String> = []
-
-        // For each slot in the order, find who filled it, in platform order
         var startersLeft = starters
+
+        // Build a mapping of slot -> assigned player (by matching eligible positions and not yet assigned)
+        var slotAssignments: [(slot: String, player: Player?)] = []
+        var availableStarters = startersLeft
+
         for slot in slots {
-            // For this slot, find a starter who matches the allowed positions and hasn't been assigned
             let allowed = allowedPositions(for: slot)
-            // Find a player in startersLeft whose position/altPositions matches allowed
-            if let pid = startersLeft.first(where: { playerId in
+            // Find a starter who matches allowed and hasn't been assigned
+            if let pid = availableStarters.first(where: { playerId in
                 if usedPlayers.contains(playerId) { return false }
                 if let player = team.roster.first(where: { $0.id == playerId }) {
                     let normPos = PositionNormalizer.normalize(player.position)
@@ -225,49 +250,122 @@ struct MatchupView: View {
                 }
                 return false
             }) {
-                if let player = team.roster.first(where: { $0.id == pid }) {
-                    let normPos = PositionNormalizer.normalize(player.position)
-                    let displaySlot: String = {
-                        // For flexes, show "Flex QB", "Flex RB", etc.
-                        if regularFlexSlots.contains(slot.uppercased()) || superFlexSlots.contains(slot.uppercased()) || idpFlexSlots.contains(slot.uppercased()) {
-                            return "Flex \(normPos)"
-                        } else {
-                            // Dual designation: if played in a non-flex, show slot
-                            return slot.uppercased()
-                        }
-                    }()
-                    lineup.append(LineupPlayer(
-                        id: pid,
-                        position: normPos,
-                        slot: displaySlot,
-                        points: playerScores[pid] ?? 0,
-                        isBench: false
-                    ))
-                    usedPlayers.insert(pid)
-                    startersLeft.removeAll { $0 == pid }
+                let player = team.roster.first(where: { $0.id == pid })
+                slotAssignments.append((slot: slot, player: player))
+                usedPlayers.insert(pid)
+                availableStarters.removeAll { $0 == pid }
+            } else {
+                slotAssignments.append((slot: slot, player: nil))
+            }
+        }
+        // Any remaining starters (should be rare, but fallback)
+        for pid in availableStarters {
+            let player = team.roster.first(where: { $0.id == pid })
+            slotAssignments.append((slot: "", player: player))
+        }
+
+        // Compose display slots per assignment
+        var strictSlots: [LineupPlayer] = []
+        var offensiveFlexes: [LineupPlayer] = []
+        var kickerSlots: [LineupPlayer] = []
+        var defensiveStrictSlots: [LineupPlayer] = []
+        var defensiveFlexes: [LineupPlayer] = []
+
+        for (slot, player) in slotAssignments {
+            guard let player = player else { continue }
+            let normPos = PositionNormalizer.normalize(player.position)
+            let normAlts = (player.altPositions ?? []).map { PositionNormalizer.normalize($0) }
+            let eligiblePositions: [String] = {
+                // If dual-designated, use both positions, else just main
+                if let alt = player.altPositions, !alt.isEmpty {
+                    let all = ([player.position] + alt).map { PositionNormalizer.normalize($0) }
+                    // Remove duplicates and keep order
+                    return Array(NSOrderedSet(array: all)) as? [String] ?? [normPos]
+                } else {
+                    return [normPos]
+                }
+            }()
+
+            // Determine display slot name
+            let displaySlot: String = {
+                // Offensive Flex
+                if isOffensiveFlexSlot(slot) {
+                    if eligiblePositions.count > 1 {
+                        return "Flex " + eligiblePositions.joined(separator: "/")
+                    } else {
+                        return "Flex \(normPos)"
+                    }
+                }
+                // Defensive Flex
+                else if isDefensiveFlexSlot(slot) {
+                    if eligiblePositions.count > 1 {
+                        return "Flex " + eligiblePositions.joined(separator: "/")
+                    } else if let dd = duelDesignation(for: slot) {
+                        return "Flex \(dd)"
+                    } else {
+                        return "Flex \(normPos)"
+                    }
+                }
+                // Strict slot (DL/LB/DB, QB/RB/WR/TE/K)
+                else if ["DL", "LB", "DB", "QB", "RB", "WR", "TE", "K"].contains(slot.uppercased()) {
+                    if eligiblePositions.count > 1 {
+                        return eligiblePositions.joined(separator: "/")
+                    } else {
+                        return normPos
+                    }
+                }
+                // Fallback
+                else {
+                    return normPos
+                }
+            }()
+
+            let playerObj = LineupPlayer(
+                id: player.id,
+                position: normPos,
+                slot: displaySlot,
+                points: playerScores[player.id] ?? 0,
+                isBench: false
+            )
+
+            // Assign to correct group for ordering
+            if ["QB", "RB", "WR", "TE"].contains(slot.uppercased()) {
+                strictSlots.append(playerObj)
+            } else if isOffensiveFlexSlot(slot) {
+                offensiveFlexes.append(playerObj)
+            } else if slot.uppercased() == "K" {
+                kickerSlots.append(playerObj)
+            } else if ["DL", "LB", "DB"].contains(slot.uppercased()) {
+                defensiveStrictSlots.append(playerObj)
+            } else if isDefensiveFlexSlot(slot) {
+                defensiveFlexes.append(playerObj)
+            } else {
+                // Fallback: group by position
+                if ["QB", "RB", "WR", "TE"].contains(normPos) {
+                    strictSlots.append(playerObj)
+                } else if ["DL", "LB", "DB"].contains(normPos) {
+                    defensiveStrictSlots.append(playerObj)
                 }
             }
         }
-        // If any starters remain unassigned, append them (shouldn't happen but fallback)
-        for pid in startersLeft {
-            if let player = team.roster.first(where: { $0.id == pid }) {
-                let normPos = PositionNormalizer.normalize(player.position)
-                lineup.append(LineupPlayer(
-                    id: pid,
-                    position: normPos,
-                    slot: normPos,
-                    points: playerScores[pid] ?? 0,
-                    isBench: false
-                ))
-            }
+
+        // Final ordering: strict offense, offensive flexes after TE, kicker, strict defense, defensive flexes after DB
+        var ordered: [LineupPlayer] = []
+        // QB, RB, WR, TE
+        ordered.append(contentsOf: strictSlots.filter { ["QB","RB","WR","TE"].contains($0.position) })
+        // Offensive Flexes
+        ordered.append(contentsOf: offensiveFlexes)
+        // Kicker
+        ordered.append(contentsOf: kickerSlots)
+        // Defensive strict slots DL, LB, DB (in order)
+        let defOrder = ["DL", "LB", "DB"]
+        for pos in defOrder {
+            ordered.append(contentsOf: defensiveStrictSlots.filter { $0.position == pos })
         }
-        // Now, order lineup by the slotOrder (not flex display)
-        lineup.sort { a, b in
-            let ai = slotOrder.firstIndex(of: a.slot) ?? 99
-            let bi = slotOrder.firstIndex(of: b.slot) ?? 99
-            return ai < bi
-        }
-        return lineup
+        // Defensive Flexes
+        ordered.append(contentsOf: defensiveFlexes)
+
+        return ordered
     }
 
     /// Returns the bench, ordered as specified
@@ -304,7 +402,7 @@ struct MatchupView: View {
         case "QB","RB","WR","TE","K","DL","LB","DB": return Set([PositionNormalizer.normalize(slot)])
         case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return Set(["RB","WR","TE"].map(PositionNormalizer.normalize))
         case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return Set(["QB","RB","WR","TE"].map(PositionNormalizer.normalize))
-        case "IDP": return Set(["DL","LB","DB"])
+        case "IDP", "IDPFLEX", "IDP_FLEX", "DFLEX", "DL_LB_DB", "DL_LB", "LB_DB", "DL_DB": return Set(["DL","LB","DB"])
         default:
             if slot.uppercased().contains("IDP") { return Set(["DL","LB","DB"]) }
             return Set([PositionNormalizer.normalize(slot)])
