@@ -2,14 +2,6 @@
 //  SlotPositionAssigner.swift
 //  DynastyStatDrop
 //
-//  Created by Dynasty Stat Drop on 10/24/25.
-//
-
-
-//
-//  SlotPositionAssigner.swift
-//  DynastyStatDrop
-//
 //  Provides global utility for credited position assignment based on lineup slot and eligible player positions.
 //  Use everywhere you compute starter stats, management %, or per-position splits.
 //  Supports all custom leagues: standard, superflex, dual-flex, IDP-heavy, and more.
@@ -33,6 +25,22 @@ public struct SlotPositionAssigner {
         "IDPFLEX","IDP_FLEX","DFLEX","DL_LB_DB","DL_LB","LB_DB","DL_DB","DP","D","DEF"
     ]
 
+    /// Helper: Is this slot an offensive flex?
+    public static func isOffensiveFlex(slot: String) -> Bool {
+        offensiveFlexSlots.contains(slot.uppercased())
+    }
+
+    /// Helper: Is this slot a defensive flex?
+    public static func isDefensiveFlex(slot: String) -> Bool {
+        let s = slot.uppercased()
+        return idpFlexSlots.contains(s) || (s.contains("IDP") && !strictSlots.contains(s))
+    }
+
+    /// Helper: Is this slot a strict slot? (QB, RB, WR, TE, K, DL, LB, DB)
+    public static func isStrictSlot(slot: String) -> Bool {
+        strictSlots.contains(slot.uppercased())
+    }
+
     /// Returns the credited (canonical) position for a player in a given slot.
     /// - If slot is strict, returns slot name (normalized).
     /// - If slot is flex or IDP flex, returns first eligible position from candidatePositions.
@@ -46,7 +54,8 @@ public struct SlotPositionAssigner {
         }
         if offensiveFlexSlots.contains(s) {
             // Credit as first eligible position (RB/WR/TE for FLEX and variants)
-            for pos in ["RB", "WR", "TE"] {
+            // PATCH: For display, always allow duel-designation for flex slots if multiple eligible
+            for pos in ["QB", "RB", "WR", "TE"] {
                 if normalizedCandidates.contains(PositionNormalizer.normalize(pos)) {
                     return PositionNormalizer.normalize(pos)
                 }
