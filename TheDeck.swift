@@ -262,6 +262,11 @@ struct DeckCard: View {
     @State private var showGradeInfo = false
     @State private var cardFace: CardFace = .front
 
+    // FIX: Move animation and display state properties to struct level
+    @State private var isLoaded: Bool = false
+    @State private var imageScale: CGFloat = 1.0
+    @State private var statsOpacity: Double = 1.0
+
     private let catPairs: [(String, (AggregatedOwnerStats) -> Double)] = [
         ("PF", { $0.totalPointsFor }),
         ("PPW", { $0.teamPPW }),
@@ -361,10 +366,7 @@ struct DeckCard: View {
             ("Championships", "\(model.championships)")
         ]
         
-        // Animated transitions
-        @State var isLoaded: Bool = false
-        @State var imageScale: CGFloat = 1.0
-        @State var statsOpacity: Double = 1.0
+        // **REMOVED** local @State declarations from here
         
         return VStack(spacing: 0) {
             // Card image (art/photo region)
