@@ -95,14 +95,12 @@ struct TheDeck: View {
             }
         }
         .onAppear {
-            // Remove all local selection logic; rely on centralized AppSelection
             reloadStacks()
         }
         .onChange(of: appSelection.selectedLeagueId) {
             reloadStacks()
         }
         .onChange(of: appSelection.leagues) {
-            // If selectedLeagueId is no longer valid, rely on AppSelection logic to fix
             reloadStacks()
         }
         .onChange(of: appSelection.selectedSeason) {
@@ -126,7 +124,8 @@ struct TheDeck: View {
                         leagueAverages: leagueMetricAverages,
                         cardSize: CGSize(width: width, height: height),
                         onCycleUp: { cycleUp() },
-                        onCycleDown: { cycleDown() }
+                        onCycleDown: { cycleDown() },
+                        leagueName: league?.name ?? "" // Pass league name to card
                     )
                     .offset(x: xOffset - CGFloat(pos) * (STACK_OFFSET_X/2),
                             y: yOffset)
@@ -259,6 +258,7 @@ struct DeckCard: View {
     let cardSize: CGSize
     let onCycleUp: () -> Void
     let onCycleDown: () -> Void
+    let leagueName: String // Pass league name
 
     @State private var showPicker = false
     @State private var showGradeInfo = false
@@ -271,7 +271,6 @@ struct DeckCard: View {
 
     // Image refresh (observe changes to the franchise image)
     @State private var currentImage: Image = Image("DefaultAvatar")
-    // Remove Combine publisher members; use @State and .onChange instead
 
     private let catPairs: [(String, (AggregatedOwnerStats) -> Double)] = [
         ("PF", { $0.totalPointsFor }),
@@ -352,14 +351,11 @@ struct DeckCard: View {
             GradeInfoSheet(gradeBreakdown: statGradeForModel(model: model, allModels: allModels))
                 .presentationDetents([.medium])
         }
-        // Observe franchise image changes for immediate refresh (front face)
         .onAppear {
-            // Use OwnerAssetStore.shared.image(for:) to initialize image on appear
             updateCurrentImage()
         }
-        // FIXED: Use new .onChange syntax (no parameter needed)
         .onChange(of: OwnerAssetStore.shared.images[model.ownerId]) {
-            updateCurrentImage() // Updates currentImage whenever published image changes
+            updateCurrentImage()
         }
     }
 
@@ -367,10 +363,8 @@ struct DeckCard: View {
         let cardName = model.displayName
         let cardTeam = model.stats.latestDisplayName
         let cardType = model.championships > 0 ? "Champion" : "Franchise"
-        // Use up-to-date image, refreshed live
         let cardImage: Image = currentImage
 
-        // Stats after removal/reordering ("Ties" removed, PF/PPW moved)
         let stats: [(String, String)] = [
             ("Wins", "\(model.wins)"),
             ("Losses", "\(model.losses)"),
@@ -405,77 +399,88 @@ struct DeckCard: View {
                 showPicker = true
             }
             
-            // Card info (bottom "stat box" area)
-            VStack(alignment: .leading, spacing: 12) {
-                // Name + Type/Grade
-                HStack {
-                    Text(cardName)
-                        .font(.custom("Phatt", size: 22))
-                        .fontWeight(.bold)
-                        .foregroundColor(Color.orange)
-                        .shadow(color: .orange.opacity(0.14), radius: 1, y: 1)
-                    Spacer()
-                    Text(cardType)
-                        .font(.caption.bold())
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.orange.opacity(0.82))
-                        .foregroundColor(.white)
-                        .clipShape(Capsule())
-                }
-                
-                // Team info (like a Pokemon card's species)
-                Text("Team: \(cardTeam)")
-                    .font(.subheadline)
-                    .foregroundColor(Color("DeckCardTeam", bundle: nil).opacity(0.95))
-                
-                // Grade badge - show only the colored grade (ElectrifiedGrade) next to "Grade:"
-                HStack(spacing: 7) {
-                    Text("Grade:")
-                        .font(.callout.bold())
-                        .foregroundColor(Color(.blue))
-                    ElectrifiedGrade(grade: statGradeForModel(model: model, allModels: allModels).grade, fontSize: 26)
-                        .frame(width: 36, height: 36)
-                    Spacer()
-                }
-                
-                Divider()
-                
-                // STATS GRID - like Pokemon stats or baseball metrics
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    ForEach(stats, id: \.0) { label, value in
-                        HStack {
-                            Text(label + ":")
-                                .font(.headline)
-                                .foregroundColor(Color(.blue))
-                            Spacer()
-                            Text(value)
-                                .font(.custom("Phatt", size: 18).weight(.bold))
-                                .foregroundColor(Color(.orange))
-                        }
-                    }
-                }
-                .opacity(statsOpacity)
-                .animation(.easeInOut(duration: 0.5).delay(0.3), value: statsOpacity)
-                
-                // Accolades (small trophies or badges)
-                if model.championships > 0 || !myAccolades.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(myAccolades, id: \.self) { stat in
-                            Image("Trophy")
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 22)
-                        }
-                        if model.championships > 0 {
-                            Text("\(model.championships)× Champ")
-                                .font(.caption2.bold())
-                                .foregroundColor(.yellow)
-                        }
+            // League name (above user name, under image, with small font)
+            if !leagueName.isEmpty {
+                Text(leagueName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.top, 2) // CORRECT: attached directly to Text
+            }
+            // Name + Type/Grade
+            HStack {
+                Text(cardName)
+                    .font(.custom("Phatt", size: 22))
+                    .fontWeight(.bold)
+                    .foregroundColor(Color.orange)
+                    .shadow(color: .orange.opacity(0.14), radius: 1, y: 1)
+                Spacer()
+                Text(cardType)
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.orange.opacity(0.82))
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            
+            // Team info
+            Text("Team: \(cardTeam)")
+                .font(.subheadline)
+                .foregroundColor(Color("DeckCardTeam", bundle: nil).opacity(0.95))
+            
+            // Grade badge
+            HStack(spacing: 7) {
+                Text("Grade:")
+                    .font(.callout.bold())
+                    .foregroundColor(Color(.blue))
+                ElectrifiedGrade(grade: statGradeForModel(model: model, allModels: allModels).grade, fontSize: 26)
+                    .frame(width: 36, height: 36)
+                Spacer()
+            }
+            
+            Divider()
+            
+            // Stats grid
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ForEach(stats, id: \.0) { label, value in
+                    HStack {
+                        Text(label + ":")
+                            .font(.headline)
+                            .foregroundColor(Color(.blue))
+                        Spacer()
+                        Text(value)
+                            .font(.custom("Phatt", size: 18).weight(.bold))
+                            .foregroundColor(Color(.orange))
                     }
                 }
             }
-            .padding()
+            .opacity(statsOpacity)
+            .animation(.easeInOut(duration: 0.5).delay(0.3), value: statsOpacity)
+            
+            // Accolades
+            if model.championships > 0 || !myAccolades.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(myAccolades, id: \.self) { stat in
+                        Image("Trophy")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 22)
+                    }
+                    if model.championships > 0 {
+                        Text("\(model.championships)× Champ")
+                            .font(.caption2.bold())
+                            .foregroundColor(.yellow)
+                    }
+                }
+            }
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 2)
             .background(
                 RoundedRectangle(cornerRadius: 13)
                     .fill(
@@ -512,9 +517,8 @@ struct DeckCard: View {
         }
     }
 
-    // Image refresh helper — called onAppear and .onChange
+    // Image refresh helper
     private func updateCurrentImage() {
-        // Use disk-backed OwnerAssetStore image (resolves Combine publisher error)
         let img = OwnerAssetStore.shared.image(for: model.ownerId)
         currentImage = img ?? Image("DefaultAvatar")
     }
@@ -572,6 +576,15 @@ struct DeckCard: View {
     private var header: some View {
         VStack(spacing: 6) {
             profileImage
+            // League name above user name (smaller font)
+            if !leagueName.isEmpty {
+                Text(leagueName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.top, 2)
+            }
             Text(model.displayName)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(.white)
@@ -618,7 +631,6 @@ struct DeckCard: View {
     private var rightAccolades: [String] { Array(myAccolades.suffix(myAccolades.count/2)) }
 
     private var profileImage: some View {
-        // Use disk-backed image for profile
         let img = OwnerAssetStore.shared.image(for: model.ownerId) ?? Image("DefaultAvatar")
         return ZStack {
             img
