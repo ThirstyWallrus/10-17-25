@@ -30,7 +30,8 @@ struct TheDeck: View {
         let latestTeams: [TeamStanding]
         // Always use selection from AppSelection for season
         if appSelection.selectedSeason == "All Time" || appSelection.selectedSeason.isEmpty {
-            latestTeams = lg.seasons.sorted { $0.id < $0.id }.last?.teams ?? lg.teams
+            // FIXED: Closure now takes two arguments for sorting
+            latestTeams = lg.seasons.sorted { $0.id < $1.id }.last?.teams ?? lg.teams
         } else {
             latestTeams = lg.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? lg.teams
         }
@@ -356,8 +357,8 @@ struct DeckCard: View {
             // Use OwnerAssetStore.shared.image(for:) to initialize image on appear
             updateCurrentImage()
         }
-        .onChange(of: OwnerAssetStore.shared.images[model.ownerId]) { _ in
-            // Use .onChange instead of .onReceive for continuity-safe image updates
+        // FIXED: Use new .onChange syntax (no parameter needed)
+        .onChange(of: OwnerAssetStore.shared.images[model.ownerId]) {
             updateCurrentImage() // Updates currentImage whenever published image changes
         }
     }
