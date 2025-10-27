@@ -262,11 +262,16 @@ struct DeckCard: View {
     @State private var showGradeInfo = false
     @State private var cardFace: CardFace = .front
 
-    // FIX: Move animation and display state properties to struct level
+    // Animation and display state properties
     @State private var isLoaded: Bool = false
     @State private var imageScale: CGFloat = 1.0
     @State private var statsOpacity: Double = 1.0
 
+    // Image refresh (observe changes to the franchise image)
+    @State private var currentImage: Image = Image("DefaultAvatar")
+    private var imagePublisher: AnyPublisher<UIImage?, Never>? {
+        OwnerAssetStore.shared.imagePublisher(for: model.ownerId)
+    }
     private let catPairs: [(String, (AggregatedOwnerStats) -> Double)] = [
         ("PF", { $0.totalPointsFor }),
         ("PPW", { $0.teamPPW }),
@@ -346,28 +351,36 @@ struct DeckCard: View {
             GradeInfoSheet(gradeBreakdown: statGradeForModel(model: model, allModels: allModels))
                 .presentationDetents([.medium])
         }
+        // Observe franchise image changes for immediate refresh (front face)
+        .onAppear {
+            updateCurrentImage()
+        }
+        .onReceive(OwnerAssetStore.shared.imagePublisher(for: model.ownerId) ?? Just(nil).eraseToAnyPublisher()) { uiImage in
+            if let uiImage = uiImage {
+                currentImage = Image(uiImage: uiImage)
+            } else {
+                currentImage = Image("DefaultAvatar")
+            }
+        }
     }
 
     private var frontContent: some View {
-        // Data mappings from your model for card details
         let cardName = model.displayName
         let cardTeam = model.stats.latestDisplayName
         let cardType = model.championships > 0 ? "Champion" : "Franchise"
-        let cardImage: Image = OwnerAssetStore.shared.image(for: model.ownerId) ?? Image("DefaultAvatar")
-        
-        // Collect stats for grid display (using same logic as before)
+        // Use up-to-date image, refreshed live
+        let cardImage: Image = currentImage
+
+        // Stats after removal/reordering ("Ties" removed, PF/PPW moved)
         let stats: [(String, String)] = [
             ("Wins", "\(model.wins)"),
             ("Losses", "\(model.losses)"),
-            ("Ties", "\(model.ties)"),
             ("PF", String(format: "%.0f", model.stats.totalPointsFor)),
             ("PPW", String(format: "%.2f", model.stats.teamPPW)),
             ("Mgmt%", String(format: "%.1f%%", model.stats.managementPercent)),
             ("Championships", "\(model.championships)")
         ]
-        
-        // **REMOVED** local @State declarations from here
-        
+
         return VStack(spacing: 0) {
             // Card image (art/photo region)
             ZStack {
@@ -378,10 +391,17 @@ struct DeckCard: View {
                     .animation(.spring(response: 0.5, dampingFraction: 0.6), value: imageScale)
                     .frame(height: cardSize.height * 0.45)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .blue.opacity(0.15), radius: 10, x: 0, y: 5)
+                    .shadow(color: Color.cyan.opacity(0.18), radius: 10, x: 0, y: 5)
             }
             .frame(height: cardSize.height * 0.45)
-            .background(Color.blue.opacity(0.09))
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color("DeckCardTopBG", bundle: nil).opacity(0.23),
+                        Color("DeckCardBottomBG", bundle: nil).opacity(0.21)
+                    ]),
+                    startPoint: .top, endPoint: .bottom)
+            )
             .onTapGesture {
                 showPicker = true
             }
@@ -391,9 +411,10 @@ struct DeckCard: View {
                 // Name + Type/Grade
                 HStack {
                     Text(cardName)
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
-                        .shadow(color: .blue.opacity(0.09), radius: 1, y: 1)
+                        .font(.custom("Phatt", size: 22))
+                        .fontWeight(.bold)
+                        .foregroundColor(Color.orange)
+                        .shadow(color: .orange.opacity(0.14), radius: 1, y: 1)
                     Spacer()
                     Text(cardType)
                         .font(.caption.bold())
@@ -407,15 +428,15 @@ struct DeckCard: View {
                 // Team info (like a Pokemon card's species)
                 Text("Team: \(cardTeam)")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(Color("DeckCardTeam", bundle: nil).opacity(0.95))
                 
-                // Grade badge/bolt
-                HStack {
+                // Grade badge - show only the colored grade (ElectrifiedGrade) next to "Grade:"
+                HStack(spacing: 7) {
+                    Text("Grade:")
+                        .font(.callout.bold())
+                        .foregroundColor(Color("DeckGradeLabel", bundle: nil))
                     ElectrifiedGrade(grade: statGradeForModel(model: model, allModels: allModels).grade, fontSize: 26)
                         .frame(width: 36, height: 36)
-                    Text("Grade: \(statGradeForModel(model: model, allModels: allModels).grade)")
-                        .font(.callout.bold())
-                        .foregroundColor(.blue)
                     Spacer()
                 }
                 
@@ -427,11 +448,11 @@ struct DeckCard: View {
                         HStack {
                             Text(label + ":")
                                 .font(.headline)
-                                .foregroundColor(.primary)
+                                .foregroundColor(Color("DeckStatLabel", bundle: nil))
                             Spacer()
                             Text(value)
-                                .font(.body.bold())
-                                .foregroundColor(.blue)
+                                .font(.custom("Phatt", size: 18).weight(.bold))
+                                .foregroundColor(Color("DeckStatValue", bundle: nil))
                         }
                     }
                 }
@@ -458,13 +479,21 @@ struct DeckCard: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 13)
-                    .fill(Color.white.opacity(0.88))
-                    .shadow(color: Color.blue.opacity(0.08), radius: 5, x: 0, y: 2)
+                    .fill(
+                        LinearGradient(colors: [
+                            Color("DeckCardStatsBG", bundle: nil).opacity(0.93),
+                            Color("DeckCardStatsBG2", bundle: nil).opacity(0.89)
+                        ], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .shadow(color: Color.cyan.opacity(0.16), radius: 5, x: 0, y: 2)
             )
         }
         .background(
             LinearGradient(
-                gradient: Gradient(colors: [Color.blue.opacity(0.22), Color.purple.opacity(0.18)]),
+                gradient: Gradient(colors: [
+                    Color("DeckCardBackTop", bundle: nil).opacity(0.22),
+                    Color("DeckCardBackBottom", bundle: nil).opacity(0.18)
+                ]),
                 startPoint: .top, endPoint: .bottom)
         )
         .clipShape(RoundedRectangle(cornerRadius: 15))
@@ -479,8 +508,15 @@ struct DeckCard: View {
                 isLoaded = true
                 statsOpacity = 1.0
                 imageScale = 1.0
+                updateCurrentImage()
             }
         }
+    }
+
+    // Image refresh helper
+    private func updateCurrentImage() {
+        let img = OwnerAssetStore.shared.image(for: model.ownerId)
+        currentImage = img ?? Image("DefaultAvatar")
     }
 
     private var backContent: some View {
