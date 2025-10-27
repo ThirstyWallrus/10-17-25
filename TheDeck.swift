@@ -344,15 +344,141 @@ struct DeckCard: View {
     }
 
     private var frontContent: some View {
-        VStack(spacing: 10) {
-            header
-            sectionHeader("Regular Season")
-            metricsGrid
-            Spacer()
+        // Data mappings from your model for card details
+        let cardName = model.displayName
+        let cardTeam = model.stats.latestDisplayName
+        let cardType = model.championships > 0 ? "Champion" : "Franchise"
+        let cardImage: Image = OwnerAssetStore.shared.image(for: model.ownerId) ?? Image("DefaultAvatar")
+        
+        // Collect stats for grid display (using same logic as before)
+        let stats: [(String, String)] = [
+            ("Wins", "\(model.wins)"),
+            ("Losses", "\(model.losses)"),
+            ("Ties", "\(model.ties)"),
+            ("PF", String(format: "%.0f", model.stats.totalPointsFor)),
+            ("PPW", String(format: "%.2f", model.stats.teamPPW)),
+            ("Mgmt%", String(format: "%.1f%%", model.stats.managementPercent)),
+            ("Championships", "\(model.championships)")
+        ]
+        
+        // Animated transitions
+        @State var isLoaded: Bool = false
+        @State var imageScale: CGFloat = 1.0
+        @State var statsOpacity: Double = 1.0
+        
+        return VStack(spacing: 0) {
+            // Card image (art/photo region)
+            ZStack {
+                cardImage
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(imageScale)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.6), value: imageScale)
+                    .frame(height: cardSize.height * 0.45)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .shadow(color: .blue.opacity(0.15), radius: 10, x: 0, y: 5)
+            }
+            .frame(height: cardSize.height * 0.45)
+            .background(Color.blue.opacity(0.09))
+            .onTapGesture {
+                showPicker = true
+            }
+            
+            // Card info (bottom "stat box" area)
+            VStack(alignment: .leading, spacing: 12) {
+                // Name + Type/Grade
+                HStack {
+                    Text(cardName)
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                        .shadow(color: .blue.opacity(0.09), radius: 1, y: 1)
+                    Spacer()
+                    Text(cardType)
+                        .font(.caption.bold())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.orange.opacity(0.82))
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
+                }
+                
+                // Team info (like a Pokemon card's species)
+                Text("Team: \(cardTeam)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                // Grade badge/bolt
+                HStack {
+                    ElectrifiedGrade(grade: statGradeForModel(model: model, allModels: allModels).grade, fontSize: 26)
+                        .frame(width: 36, height: 36)
+                    Text("Grade: \(statGradeForModel(model: model, allModels: allModels).grade)")
+                        .font(.callout.bold())
+                        .foregroundColor(.blue)
+                    Spacer()
+                }
+                
+                Divider()
+                
+                // STATS GRID - like Pokemon stats or baseball metrics
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(stats, id: \.0) { label, value in
+                        HStack {
+                            Text(label + ":")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(value)
+                                .font(.body.bold())
+                                .foregroundColor(.blue)
+                        }
+                    }
+                }
+                .opacity(statsOpacity)
+                .animation(.easeInOut(duration: 0.5).delay(0.3), value: statsOpacity)
+                
+                // Accolades (small trophies or badges)
+                if model.championships > 0 || !myAccolades.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(myAccolades, id: \.self) { stat in
+                            Image("Trophy")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 22)
+                        }
+                        if model.championships > 0 {
+                            Text("\(model.championships)× Champ")
+                                .font(.caption2.bold())
+                                .foregroundColor(.yellow)
+                        }
+                    }
+                }
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 13)
+                    .fill(Color.white.opacity(0.88))
+                    .shadow(color: Color.blue.opacity(0.08), radius: 5, x: 0, y: 2)
+            )
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
+        .background(
+            LinearGradient(
+                gradient: Gradient(colors: [Color.blue.opacity(0.22), Color.purple.opacity(0.18)]),
+                startPoint: .top, endPoint: .bottom)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 15))
+        .shadow(color: Color.black.opacity(0.17), radius: 14, x: 0, y: 5)
+        .padding(.vertical, 8)
+        .frame(width: cardSize.width, height: cardSize.height)
+        .scaleEffect(isLoaded ? 1.0 : 0.95)
+        .opacity(isLoaded ? 1.0 : 0.0)
+        .animation(.easeOut(duration: 0.55), value: isLoaded)
+        .onAppear {
+            withAnimation {
+                isLoaded = true
+                statsOpacity = 1.0
+                imageScale = 1.0
+            }
+        }
     }
 
     private var backContent: some View {
