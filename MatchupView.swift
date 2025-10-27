@@ -453,6 +453,46 @@ struct MatchupView: View {
         opponentTeamStanding.map { teamDisplay(for: $0, week: currentWeekNumber) }
     }
 
+    // MARK: - Helper: Username Extraction
+
+    private var userDisplayName: String {
+        // Prefer AuthViewModel username, fallback to team name
+        if let username = appSelection.selectedLeague?.name, !username.isEmpty {
+            return username
+        }
+        if let currentUsername = appSelection.selectedTeam?.name, !currentUsername.isEmpty {
+            return currentUsername
+        }
+        return "Your"
+    }
+
+    private var userTeamName: String {
+        if let team = userTeamStanding {
+            return team.name
+        }
+        return "Team"
+    }
+
+    private var opponentDisplayName: String {
+        // Try owner display name from league allTimeOwnerStats if available
+        if let opp = opponentTeamStanding {
+            // If AggregatedOwnerStats is available, use latestDisplayName
+            if let stats = opp.league?.allTimeOwnerStats?[opp.ownerId], !stats.latestDisplayName.isEmpty {
+                return stats.latestDisplayName
+            } else if !opp.name.isEmpty {
+                return opp.name
+            }
+        }
+        return "Opponent"
+    }
+
+    private var opponentTeamName: String {
+        if let team = opponentTeamStanding {
+            return team.name
+        }
+        return "Team"
+    }
+
     // MARK: - UI
 
     var body: some View {
@@ -671,9 +711,16 @@ struct MatchupView: View {
 
     private func teamScoreBox(team: TeamDisplay?, accent: Color, isUser: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(isUser ? "Your Team" : "Opponent")
-                .font(.headline.bold())
-                .foregroundColor(.orange)
+            // PATCH: Show "[Username]'s Team" on left, "[Opponent's Username]'s Team" on right
+            if isUser {
+                Text("\(userDisplayName)'s Team")
+                    .font(.headline.bold())
+                    .foregroundColor(.orange)
+            } else {
+                Text("\(opponentDisplayName)'s Team")
+                    .font(.headline.bold())
+                    .foregroundColor(.orange)
+            }
             if let team = team {
                 HStack {
                     Text("Points")
@@ -704,8 +751,8 @@ struct MatchupView: View {
 
     private var lineupsSection: some View {
         HStack(spacing: 16) {
-            teamLineupBox(team: userTeam, accent: Color.cyan, title: "Your Lineup")
-            teamLineupBox(team: opponentTeam, accent: Color.yellow, title: "Opponent Lineup")
+            teamLineupBox(team: userTeam, accent: Color.cyan, title: "\(userDisplayName)'s Lineup")
+            teamLineupBox(team: opponentTeam, accent: Color.yellow, title: "\(opponentDisplayName)'s Lineup")
         }
         .padding(16)
         .background(
@@ -751,8 +798,8 @@ struct MatchupView: View {
 
     private var benchesSection: some View {
         HStack(spacing: 16) {
-            teamBenchBox(team: userTeam, accent: Color.cyan, title: "Your Bench")
-            teamBenchBox(team: opponentTeam, accent: Color.yellow, title: "Opponent Bench")
+            teamBenchBox(team: userTeam, accent: Color.cyan, title: "\(userDisplayName)'s Bench")
+            teamBenchBox(team: opponentTeam, accent: Color.yellow, title: "\(opponentDisplayName)'s Bench")
         }
         .padding(16)
         .background(
@@ -1066,3 +1113,4 @@ struct MatchupView: View {
         return (actualTotal, maxTotal, actualOff, maxOff, actualDef, maxDef)
     }
 }
+
