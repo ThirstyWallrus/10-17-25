@@ -66,6 +66,7 @@ struct MatchupView: View {
         let slot: String // Raw slot played (for reference)
         let points: Double
         let isBench: Bool
+        let slotColor: Color? // NEW: color for flex slot display
     }
 
     struct TeamDisplay {
@@ -262,7 +263,71 @@ struct MatchupView: View {
             slotAssignments.append((slot: "", player: player))
         }
 
-        // Compose display slots per assignment (STRICT RULES PATCHED)
+        // PATCH: Strict Duel-Designation Lineup Display
+        // Build displaySlot for each assignment according to new rules:
+        // - Strict slots: show all eligible positions joined by "/"
+        // - Flex slots: show "Flex [POSITION(S)]", joining all eligible positions
+
+        for (slot, player) in slotAssignments {
+            guard let player = player else { continue }
+            let normPos = PositionNormalizer.normalize(player.position)
+            let normAlts = (player.altPositions ?? []).map { PositionNormalizer.normalize($0) }
+            let eligiblePositions: [String] = {
+                // All eligible positions for this player
+                if let alt = player.altPositions, !alt.isEmpty {
+                    let all = ([player.position] + alt).map { PositionNormalizer.normalize($0) }
+                    // Remove duplicates and keep order
+                    return Array(NSOrderedSet(array: all)) as? [String] ?? [normPos]
+                } else {
+                    return [normPos]
+                }
+            }()
+
+            // Determine display slot name (STRICT PATCH)
+            let displaySlot: String
+            var slotColor: Color? = nil
+            if isOffensiveFlexSlot(slot) {
+                // Flex offensive: "Flex [POSITION(S)]", color by first eligible
+                displaySlot = "Flex " + eligiblePositions.joined(separator: "/")
+                slotColor = colorForPosition(eligiblePositions.first ?? normPos)
+            } else if isDefensiveFlexSlot(slot) {
+                // Flex defensive: "Flex [POSITION(S)]", color by first eligible
+                displaySlot = "Flex " + eligiblePositions.joined(separator: "/")
+                slotColor = colorForPosition(eligiblePositions.first ?? normPos)
+            } else if ["QB","RB","WR","TE","K","DL","LB","DB"].contains(slot.uppercased()) {
+                // Strict slot: if multiple eligible, join all with /
+                if eligiblePositions.count > 1 {
+                    displaySlot = eligiblePositions.joined(separator: "/")
+                } else {
+                    displaySlot = normPos
+                }
+                slotColor = colorForPosition(eligiblePositions.first ?? normPos)
+            } else {
+                // Fallback: join all eligible positions
+                if eligiblePositions.count > 1 {
+                    displaySlot = eligiblePositions.joined(separator: "/")
+                } else {
+                    displaySlot = normPos
+                }
+                slotColor = colorForPosition(eligiblePositions.first ?? normPos)
+            }
+
+            let creditedPosition = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: eligiblePositions, base: player.position)
+
+            lineup.append(LineupPlayer(
+                id: player.id,
+                displaySlot: displaySlot,
+                creditedPosition: creditedPosition,
+                position: normPos,
+                slot: slot,
+                points: playerScores[player.id] ?? 0,
+                isBench: false,
+                slotColor: slotColor
+            ))
+        }
+
+        // Final ordering: QB, RB, WR, TE, all offensive flex slots, K, DL, LB, DB, all defensive flex slots
+        // (No change to ordering logic per instructions)
         var qbSlots: [LineupPlayer] = []
         var rbSlots: [LineupPlayer] = []
         var wrSlots: [LineupPlayer] = []
@@ -274,65 +339,8 @@ struct MatchupView: View {
         var dbSlots: [LineupPlayer] = []
         var defensiveFlexSlotsArr: [LineupPlayer] = []
 
-        for (slot, player) in slotAssignments {
-            guard let player = player else { continue }
-            let normPos = PositionNormalizer.normalize(player.position)
-            let normAlts = (player.altPositions ?? []).map { PositionNormalizer.normalize($0) }
-            let eligiblePositions: [String] = {
-                // If duel-designated, use all altPositions (preserved order), else just main
-                if let alt = player.altPositions, !alt.isEmpty {
-                    let all = ([player.position] + alt).map { PositionNormalizer.normalize($0) }
-                    // Remove duplicates and keep order
-                    return Array(NSOrderedSet(array: all)) as? [String] ?? [normPos]
-                } else {
-                    return [normPos]
-                }
-            }()
-
-            // Determine credited position for display and ordering
-            let creditedPosition = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: eligiblePositions, base: player.position)
-
-            // Determine display slot name (STRICT PATCH)
-            let displaySlot: String = {
-                if isOffensiveFlexSlot(slot) {
-                    // Offensive flex: display "Flex " + eligible positions
-                    let flexPositions = eligiblePositions.filter { ["QB","RB","WR","TE"].contains($0) }
-                    let joined = flexPositions.isEmpty ? eligiblePositions.joined(separator: "/") : flexPositions.joined(separator: "/")
-                    return "Flex " + joined
-                } else if isDefensiveFlexSlot(slot) {
-                    // Defensive flex: display "Flex " + eligible positions
-                    let flexPositions = eligiblePositions.filter { ["DL","LB","DB"].contains($0) }
-                    let joined = flexPositions.isEmpty ? eligiblePositions.joined(separator: "/") : flexPositions.joined(separator: "/")
-                    return "Flex " + joined
-                } else if ["QB","RB","WR","TE","K","DL","LB","DB"].contains(slot.uppercased()) {
-                    // Strict slot: duel-designated, show all eligible positions joined by "/"
-                    if eligiblePositions.count > 1 {
-                        return eligiblePositions.joined(separator: "/")
-                    } else {
-                        return normPos
-                    }
-                } else {
-                    // Fallback
-                    if eligiblePositions.count > 1 {
-                        return eligiblePositions.joined(separator: "/")
-                    } else {
-                        return normPos
-                    }
-                }
-            }()
-
-            let playerObj = LineupPlayer(
-                id: player.id,
-                displaySlot: displaySlot,
-                creditedPosition: creditedPosition,
-                position: normPos,
-                slot: slot,
-                points: playerScores[player.id] ?? 0,
-                isBench: false
-            )
-
-            // Assign to correct group for ordering (STRICT PATCH)
-            switch creditedPosition {
+        for playerObj in lineup {
+            switch playerObj.creditedPosition {
             case "QB": qbSlots.append(playerObj)
             case "RB": rbSlots.append(playerObj)
             case "WR": wrSlots.append(playerObj)
@@ -342,15 +350,14 @@ struct MatchupView: View {
             case "LB": lbSlots.append(playerObj)
             case "DB": dbSlots.append(playerObj)
             default:
-                if isOffensiveFlexSlot(slot) {
+                if isOffensiveFlexSlot(playerObj.slot) {
                     offensiveFlexSlotsArr.append(playerObj)
-                } else if isDefensiveFlexSlot(slot) {
+                } else if isDefensiveFlexSlot(playerObj.slot) {
                     defensiveFlexSlotsArr.append(playerObj)
                 }
             }
         }
 
-        // Final ordering: QB, RB, WR, TE, all offensive flex slots, K, DL, LB, DB, all defensive flex slots
         var ordered: [LineupPlayer] = []
         ordered.append(contentsOf: qbSlots)
         ordered.append(contentsOf: rbSlots)
@@ -393,7 +400,8 @@ struct MatchupView: View {
                 position: normPos,
                 slot: normPos,
                 points: playerScores[player.id] ?? 0,
-                isBench: true
+                isBench: true,
+                slotColor: nil
             )
         }
         // Sort bench by position order
@@ -710,6 +718,7 @@ struct MatchupView: View {
         )
     }
 
+    // PATCH: Strict Duel-Designation Lineup Display for starters
     private func teamLineupBox(team: TeamDisplay?, accent: Color, title: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -718,8 +727,14 @@ struct MatchupView: View {
             if let lineup = team?.lineup {
                 ForEach(lineup) { player in
                     HStack {
-                        Text(player.displaySlot)
-                            .foregroundColor(positionColor(player.creditedPosition))
+                        // If color for slot is set, use it; otherwise fallback to position color
+                        if let slotColor = player.slotColor {
+                            Text(player.displaySlot)
+                                .foregroundColor(slotColor)
+                        } else {
+                            Text(player.displaySlot)
+                                .foregroundColor(positionColor(player.creditedPosition))
+                        }
                         Spacer()
                         Text(String(format: "%.1f", player.points))
                             .foregroundColor(.green)
@@ -750,6 +765,7 @@ struct MatchupView: View {
         )
     }
 
+    // Bench display unchanged, already joins altPositions for display
     private func teamBenchBox(team: TeamDisplay?, accent: Color, title: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -887,6 +903,21 @@ struct MatchupView: View {
     }
 
     private func positionColor(_ pos: String) -> Color {
+        switch pos {
+        case "QB": return .red
+        case "RB": return .green
+        case "WR": return .blue
+        case "TE": return .yellow
+        case "K": return .purple.opacity(0.6)
+        case "DL": return .orange
+        case "LB": return .purple
+        case "DB": return .pink
+        default: return .white
+        }
+    }
+
+    private func colorForPosition(_ pos: String) -> Color {
+        // For flex slots: use color of first eligible position
         switch pos {
         case "QB": return .red
         case "RB": return .green
