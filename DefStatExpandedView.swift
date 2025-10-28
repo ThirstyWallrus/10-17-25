@@ -2,29 +2,29 @@
 //  DefStatExpandedView.swift
 //  DynastyStatDrop
 //
-//  Created by Dynasty Stat Drop on 10/25/25.
+//  Refactored for centralized state management, all-time compliance, and continuity-safe weekly stat aggregation.
 //
-
-//
-//  DefStatExpandedView.swift
-//  DynastyStatDrop
-//
-//  Extracted from DSDDashboard.swift for improved modularity and clarity
+//  Instructions followed:
+//  - Uses @EnvironmentObject appSelection for team/league/season state
+//  - Weekly stat calculations exclude current week if incomplete
+//  - Detects "All Time" mode and uses aggregate stats if present
+//  - All position logic uses PositionNormalizer.normalize(_)
+//  - No legacy direct parameters for team/league
+//  - No code truncated
 //
 
 import SwiftUI
 
 struct DefStatExpandedView: View {
-    let team: TeamStanding
-    let league: LeagueData
-    let personality: StatDropPersonality
+    @EnvironmentObject var appSelection: AppSelection
 
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
 
+    // Defensive positions
     private let defPositions: [String] = ["DL", "LB", "DB"]
 
-    // Position color mapping (must match app mapping)
+    // Position color mapping
     private var positionColors: [String: Color] {
         [
             "QB": .red,
@@ -38,15 +38,50 @@ struct DefStatExpandedView: View {
         ]
     }
 
-    // Builds stacked bar data for each completed week (oldest to newest)
+    // MARK: - Team/League/Season State
+
+    private var team: TeamStanding? { appSelection.selectedTeam }
+    private var league: LeagueData? { appSelection.selectedLeague }
+    private var isAllTime: Bool { appSelection.isAllTimeMode }
+    private var aggregate: AggregatedOwnerStats? {
+        guard isAllTime, let league, let team else { return nil }
+        return league.allTimeOwnerStats?[team.ownerId]
+    }
+
+    // MARK: - Weeks to Include (Exclude Current Week if Incomplete)
+
+    private var validWeeks: [Int] {
+        guard let league, let team else { return [] }
+        // For season mode, use the selected season
+        if !isAllTime, let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) {
+            let allWeeks = season.matchupsByWeek?.keys.sorted() ?? []
+            if let currentWeek = allWeeks.max(), allWeeks.count > 1 {
+                return allWeeks.filter { $0 != currentWeek }
+            }
+            return allWeeks
+        }
+        // For all time mode, use the latest season's weeks (for continuity in charts)
+        if isAllTime {
+            let latest = league.seasons.sorted { $0.id < $1.id }.last
+            let allWeeks = latest?.matchupsByWeek?.keys.sorted() ?? []
+            if let currentWeek = allWeeks.max(), allWeeks.count > 1 {
+                return allWeeks.filter { $0 != currentWeek }
+            }
+            return allWeeks
+        }
+        return []
+    }
+
+    // MARK: - Stacked Bar Chart Data
+
     private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
-        // Group PlayerWeeklyScores by week (from all rostered players)
+        guard let team else { return [] }
         let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
-        let sortedWeeks = grouped.keys.sorted()
+        let sortedWeeks = validWeeks
         return sortedWeeks.map { week in
             // For each position, sum scores for this week
             let posSums: [String: Double] = defPositions.reduce(into: [:]) { dict, pos in
-                dict[pos] = grouped[week]?.filter { matchesPosition($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                dict[pos] = grouped[week]?.filter { matchesNormalizedPosition($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
             }
             let segments = defPositions.map { pos in
                 StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: pos, value: posSums[pos] ?? 0)
@@ -55,13 +90,11 @@ struct DefStatExpandedView: View {
         }
     }
 
-    // Helper: check if a PlayerWeeklyScore's player matches the target position
-    private func matchesPosition(_ score: PlayerWeeklyScore, pos: String) -> Bool {
-        // Find the player object for this score
-        if let player = team.roster.first(where: { $0.id == score.player_id }) {
-            return player.position == pos
-        }
-        return false
+    // Helper: check if a PlayerWeeklyScore's player matches the target normalized position
+    private func matchesNormalizedPosition(_ score: PlayerWeeklyScore, pos: String) -> Bool {
+        guard let team = team,
+              let player = team.roster.first(where: { $0.id == score.player_id }) else { return false }
+        return PositionNormalizer.normalize(player.position) == PositionNormalizer.normalize(pos)
     }
 
     private var sideWeeklyPoints: [Double] {
@@ -74,7 +107,10 @@ struct DefStatExpandedView: View {
         return sideWeeklyPoints.suffix(3).reduce(0,+)/Double(min(3,weeksPlayed))
     }
     private var seasonAvg: Double {
-        guard weeksPlayed > 0 else { return team.averageDefensivePPW ?? 0 }
+        guard weeksPlayed > 0 else {
+            if let agg = aggregate { return agg.defensivePPW }
+            return team?.averageDefensivePPW ?? 0
+        }
         return sideWeeklyPoints.reduce(0,+)/Double(weeksPlayed)
     }
     private var formDelta: Double { last3Avg - seasonAvg }
@@ -84,12 +120,22 @@ struct DefStatExpandedView: View {
         return .yellow
     }
 
-    private var sidePoints: Double { team.defensivePointsFor ?? 0 }
-    private var sideMaxPoints: Double { team.maxDefensivePointsFor ?? 0 }
+    // MARK: - Defensive Points and Management %
+
+    private var sidePoints: Double {
+        if let agg = aggregate { return agg.totalDefensivePointsFor }
+        return team?.defensivePointsFor ?? 0
+    }
+    private var sideMaxPoints: Double {
+        if let agg = aggregate { return agg.totalMaxDefensivePointsFor }
+        return team?.maxDefensivePointsFor ?? 0
+    }
     private var managementPercent: Double {
         guard sideMaxPoints > 0 else { return 0 }
         return (sidePoints / sideMaxPoints) * 100
     }
+
+    // MARK: - Consistency (StdDev)
 
     private var stdDev: Double {
         guard weeksPlayed > 1 else { return 0 }
@@ -106,7 +152,16 @@ struct DefStatExpandedView: View {
         }
     }
 
+    // MARK: - Strengths/Weaknesses
+
     private var strengths: [String] {
+        if let agg = aggregate {
+            var arr: [String] = []
+            if agg.defensiveManagementPercent >= 75 { arr.append("Efficient Usage") }
+            if stdDev < 15 && weeksPlayed >= 4 { arr.append("Reliable Output") }
+            if arr.isEmpty { arr.append("Developing Unit") }
+            return arr
+        }
         var arr: [String] = []
         if managementPercent >= 75 { arr.append("Efficient Usage") }
         if stdDev < 15 && weeksPlayed >= 4 { arr.append("Reliable Output") }
@@ -114,6 +169,14 @@ struct DefStatExpandedView: View {
         return arr
     }
     private var weaknesses: [String] {
+        if let agg = aggregate {
+            var arr: [String] = []
+            if agg.defensiveManagementPercent < 55 { arr.append("Usage Inefficiency") }
+            if stdDev > 40 { arr.append("Volatility") }
+            if weeksPlayed >= 3 && last3Avg < seasonAvg - 5 { arr.append("Recent Dip") }
+            if arr.isEmpty { arr.append("No Major Weakness") }
+            return arr
+        }
         var arr: [String] = []
         if managementPercent < 55 { arr.append("Usage Inefficiency") }
         if stdDev > 40 { arr.append("Volatility") }
@@ -126,7 +189,7 @@ struct DefStatExpandedView: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             sectionHeader("Defensive Weekly Trend")
-            // --- REPLACEMENT: Use StackedBarWeeklyChart instead of WeeklyPointsTrend ---
+            // Chart: Excludes current week if incomplete, uses normalized positions
             StackedBarWeeklyChart(
                 weekBars: stackedBarWeekData,
                 positionColors: positionColors,
@@ -142,12 +205,14 @@ struct DefStatExpandedView: View {
             lineupEfficiency
             sectionHeader("Recent Form")
             recentForm
-            StatDropAnalysisBox(
-                team: team,
-                league: league,
-                context: .defense,
-                personality: personality
-            )
+            if let team = team, let league = league {
+                StatDropAnalysisBox(
+                    team: team,
+                    league: league,
+                    context: .defense,
+                    personality: .classicESPN
+                )
+            }
             sectionHeader("Consistency Score")
             consistencyRow
         }
@@ -321,3 +386,4 @@ struct DefStatExpandedView: View {
         }
     }
 }
+
