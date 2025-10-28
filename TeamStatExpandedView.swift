@@ -28,13 +28,54 @@ struct TeamStatExpandedView: View {
     // Use selected team from AppSelection
     private var team: TeamStanding? { appSelection.selectedTeam }
     
+    // MARK: - Stacked Bar Chart Data Preparation
+
+    // Defines all positions to display in the stacked bar chart for TeamStatExpandedView
+    private let allPositions: [String] = ["QB", "RB", "WR", "TE", "K", "DL", "LB", "DB"]
+
+    // Maps canonical fantasy positions to their colors (must match app mapping)
+    private var positionColors: [String: Color] {
+        [
+            "QB": .red,
+            "RB": .green,
+            "WR": .blue,
+            "TE": .yellow,
+            "K": Color(red: 0.75, green: 0.6, blue: 1.0),
+            "DL": .orange,
+            "LB": .purple,
+            "DB": .pink
+        ]
+    }
+
+    // Builds stacked bar data for each completed week (oldest to newest)
+    private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
+        guard let team else { return [] }
+        // Group PlayerWeeklyScores by week (from all rostered players)
+        let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
+        let sortedWeeks = grouped.keys.sorted()
+        return sortedWeeks.map { week in
+            // For each position, sum scores for this week
+            let posSums: [String: Double] = allPositions.reduce(into: [:]) { dict, pos in
+                dict[pos] = grouped[week]?.filter { $0ForPos($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+            }
+            let segments = allPositions.map { pos in
+                StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: pos, value: posSums[pos] ?? 0)
+            }
+            return StackedBarWeeklyChart.WeekBarData(id: week, segments: segments)
+        }
+    }
+
+    // Helper: check if a PlayerWeeklyScore's player matches the target position
+    private func $0ForPos(_ score: PlayerWeeklyScore, pos: String) -> Bool {
+        // Find the player object for this score
+        guard let team = team,
+              let player = team.roster.first(where: { $0.id == score.player_id }) else { return false }
+        return player.position == pos
+    }
+    
     // Derived weekly totals (actual roster total per week)
     private var weeklyPoints: [Double] {
-        guard let team else { return [] }
-        let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
-        return grouped.keys.sorted().map { wk in
-            grouped[wk]?.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
-        }
+        stackedBarWeekData.map { $0.total }
     }
     
     private var weeksPlayed: Int { weeklyPoints.count }
@@ -91,8 +132,18 @@ struct TeamStatExpandedView: View {
         VStack(alignment: .leading, spacing: 18) {
             if let team = team {
                 header(team: team)
-                sectionHeader("Weekly Points Trend")
-                WeeklyPointsTrend(points: weeklyPoints, accent: .yellow)
+                sectionHeader("Weekly Points by Position")
+                // --- REPLACED: Sparkline/WeeklyPointsTrend with StackedBarWeeklyChart ---
+                StackedBarWeeklyChart(
+                    weekBars: stackedBarWeekData,
+                    positionColors: positionColors,
+                    gridLines: [100, 200, 300],
+                    chartTop: 400,
+                    showPositions: Set(allPositions),
+                    barSpacing: 4,
+                    tooltipFont: .caption2.bold(),
+                    showWeekLabels: true
+                )
                 sectionHeader("Lineup Efficiency")
                 lineupEfficiency(team: team)
                 sectionHeader("Off vs Def Contribution")
