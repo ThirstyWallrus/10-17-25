@@ -4,6 +4,14 @@
 import SwiftUI
 import Foundation
 
+// MARK: - StatGradeBreakdown Definition (PATCH)
+struct StatGradeBreakdown {
+    let grade: String
+    let composite: Double
+    let percentiles: [String: Double]
+    let summary: String
+}
+
 struct TheDeck: View {
     @EnvironmentObject var appSelection: AppSelection
     @Binding var selectedTab: Tab
