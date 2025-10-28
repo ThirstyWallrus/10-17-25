@@ -46,7 +46,7 @@ struct DefStatExpandedView: View {
         return sortedWeeks.map { week in
             // For each position, sum scores for this week
             let posSums: [String: Double] = defPositions.reduce(into: [:]) { dict, pos in
-                dict[pos] = grouped[week]?.filter { $0ForPos($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                dict[pos] = grouped[week]?.filter { matchesPosition($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
             }
             let segments = defPositions.map { pos in
                 StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: pos, value: posSums[pos] ?? 0)
@@ -56,7 +56,7 @@ struct DefStatExpandedView: View {
     }
 
     // Helper: check if a PlayerWeeklyScore's player matches the target position
-    private func $0ForPos(_ score: PlayerWeeklyScore, pos: String) -> Bool {
+    private func matchesPosition(_ score: PlayerWeeklyScore, pos: String) -> Bool {
         // Find the player object for this score
         if let player = team.roster.first(where: { $0.id == score.player_id }) {
             return player.position == pos
