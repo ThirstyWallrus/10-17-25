@@ -371,3 +371,54 @@ struct TeamStatExpandedView: View {
         }
     }
 }
+
+// MARK: - Sheet Views
+
+struct ConsistencyInfoSheet: View {
+    let stdDev: Double
+    let descriptor: String
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Consistency Score")
+                .font(.title3.bold())
+                .foregroundColor(.yellow)
+            Text("Standard deviation measures how much your weekly points fluctuate. Lower = steadier.")
+                .font(.body)
+                .foregroundColor(.white.opacity(0.8))
+            Text("Your score: \(String(format: "%.1f", stdDev)) (\(descriptor))")
+                .font(.title2.bold())
+                .foregroundColor(.orange)
+            Spacer()
+        }
+        .padding()
+        .background(Color.black)
+    }
+}
+
+struct EfficiencyInfoSheet: View {
+    let managementPercent: Double
+    let pointsFor: Double
+    let maxPointsFor: Double
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Lineup Efficiency")
+                .font(.title3.bold())
+                .foregroundColor(.yellow)
+            Text("Management % compares your actual points to the max possible lineup each week.")
+                .font(.body)
+                .foregroundColor(.white.opacity(0.8))
+            Text("Your efficiency: \(String(format: "%.1f%%", managementPercent))")
+                .font(.title2.bold())
+                .foregroundColor(.orange)
+            Text("Points For: \(String(format: "%.1f", pointsFor))")
+                .font(.body)
+                .foregroundColor(.white)
+            Text("Max PF: \(String(format: "%.1f", maxPointsFor))")
+                .font(.body)
+                .foregroundColor(.white)
+            Spacer()
+        }
+        .padding()
+        .background(Color.black)
+    }
+}
