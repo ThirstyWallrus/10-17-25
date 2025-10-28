@@ -3,7 +3,6 @@
 
 import SwiftUI
 import Foundation
-// No need for import Combine—SwiftUI .onChange suffices for image updates
 
 struct TheDeck: View {
     @EnvironmentObject var appSelection: AppSelection
@@ -28,9 +27,7 @@ struct TheDeck: View {
         guard let lg = league,
               let cache = lg.allTimeOwnerStats else { return [] }
         let latestTeams: [TeamStanding]
-        // Always use selection from AppSelection for season
         if appSelection.selectedSeason == "All Time" || appSelection.selectedSeason.isEmpty {
-            // FIXED: Closure now takes two arguments for sorting
             latestTeams = lg.seasons.sorted { $0.id < $1.id }.last?.teams ?? lg.teams
         } else {
             latestTeams = lg.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? lg.teams
@@ -76,7 +73,6 @@ struct TheDeck: View {
                         .foregroundColor(.orange)
                         .shadow(color: .orange.opacity(0.55), radius: 14, y: 4)
                         .padding(.top, 16)
-                    // Centralized selection: always use AppSelection's properties
                     LeagueSeasonTeamPicker(showLeague: true, showSeason: true, showTeam: false)
                         .environmentObject(appSelection)
                 }
@@ -125,7 +121,7 @@ struct TheDeck: View {
                         cardSize: CGSize(width: width, height: height),
                         onCycleUp: { cycleUp() },
                         onCycleDown: { cycleDown() },
-                        leagueName: league?.name ?? "" // Pass league name to card
+                        leagueName: league?.name ?? ""
                     )
                     .offset(x: xOffset - CGFloat(pos) * (STACK_OFFSET_X/2),
                             y: yOffset)
@@ -258,18 +254,15 @@ struct DeckCard: View {
     let cardSize: CGSize
     let onCycleUp: () -> Void
     let onCycleDown: () -> Void
-    let leagueName: String // Pass league name
+    let leagueName: String
 
     @State private var showPicker = false
     @State private var showGradeInfo = false
     @State private var cardFace: CardFace = .front
 
-    // Animation and display state properties
     @State private var isLoaded: Bool = false
     @State private var imageScale: CGFloat = 1.0
     @State private var statsOpacity: Double = 1.0
-
-    // Image refresh (observe changes to the franchise image)
     @State private var currentImage: Image = Image("DefaultAvatar")
 
     private let catPairs: [(String, (AggregatedOwnerStats) -> Double)] = [
@@ -359,6 +352,7 @@ struct DeckCard: View {
         }
     }
 
+    // PATCH: Ensure all computed views return a concrete view, not just a modifier.
     private var frontContent: some View {
         let cardName = model.displayName
         let cardTeam = model.stats.latestDisplayName
@@ -401,12 +395,15 @@ struct DeckCard: View {
             
             // League name (above user name, under image, with small font)
             if !leagueName.isEmpty {
-                Text(leagueName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.75))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .padding(.top, 2) // CORRECT: attached directly to Text
+                // PATCH: Always attach .padding to a view instance, not just .padding at the top-level.
+                Group {
+                    Text(leagueName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.top, 2)
+                }
             }
             // Name + Type/Grade
             HStack {
@@ -517,7 +514,6 @@ struct DeckCard: View {
         }
     }
 
-    // Image refresh helper
     private func updateCurrentImage() {
         let img = OwnerAssetStore.shared.image(for: model.ownerId)
         currentImage = img ?? Image("DefaultAvatar")
@@ -576,14 +572,15 @@ struct DeckCard: View {
     private var header: some View {
         VStack(spacing: 6) {
             profileImage
-            // League name above user name (smaller font)
             if !leagueName.isEmpty {
-                Text(leagueName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.75))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .padding(.top, 2)
+                Group {
+                    Text(leagueName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.75))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.top, 2)
+                }
             }
             Text(model.displayName)
                 .font(.system(size: 20, weight: .semibold))
