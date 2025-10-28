@@ -5,7 +5,6 @@
 //  Created by Dynasty Stat Drop on 10/25/25.
 //
 
-
 //
 //  DefStatExpandedView.swift
 //  DynastyStatDrop
@@ -23,16 +22,50 @@ struct DefStatExpandedView: View {
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
 
-    private var positionSet: Set<String> { ["DL","LB","DB"] }
+    private let defPositions: [String] = ["DL", "LB", "DB"]
+
+    // Position color mapping (must match app mapping)
+    private var positionColors: [String: Color] {
+        [
+            "QB": .red,
+            "RB": .green,
+            "WR": .blue,
+            "TE": .yellow,
+            "K": Color.purple,
+            "DL": .orange,
+            "LB": .purple,
+            "DB": .pink
+        ]
+    }
+
+    // Builds stacked bar data for each completed week (oldest to newest)
+    private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
+        // Group PlayerWeeklyScores by week (from all rostered players)
+        let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
+        let sortedWeeks = grouped.keys.sorted()
+        return sortedWeeks.map { week in
+            // For each position, sum scores for this week
+            let posSums: [String: Double] = defPositions.reduce(into: [:]) { dict, pos in
+                dict[pos] = grouped[week]?.filter { $0ForPos($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+            }
+            let segments = defPositions.map { pos in
+                StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: pos, value: posSums[pos] ?? 0)
+            }
+            return StackedBarWeeklyChart.WeekBarData(id: week, segments: segments)
+        }
+    }
+
+    // Helper: check if a PlayerWeeklyScore's player matches the target position
+    private func $0ForPos(_ score: PlayerWeeklyScore, pos: String) -> Bool {
+        // Find the player object for this score
+        if let player = team.roster.first(where: { $0.id == score.player_id }) {
+            return player.position == pos
+        }
+        return false
+    }
 
     private var sideWeeklyPoints: [Double] {
-        let filteredScores = team.roster
-            .filter { positionSet.contains($0.position) }
-            .flatMap { $0.weeklyScores }
-        let grouped = Dictionary(grouping: filteredScores, by: { $0.week })
-        return grouped.keys.sorted().map { wk in
-            grouped[wk]?.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
-        }
+        stackedBarWeekData.map { $0.total }
     }
 
     private var weeksPlayed: Int { sideWeeklyPoints.count }
@@ -93,8 +126,18 @@ struct DefStatExpandedView: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             sectionHeader("Defensive Weekly Trend")
-            WeeklyPointsTrend(points: sideWeeklyPoints, stroke: .blue, accent: .cyan)
-                .frame(height: 120)
+            // --- REPLACEMENT: Use StackedBarWeeklyChart instead of WeeklyPointsTrend ---
+            StackedBarWeeklyChart(
+                weekBars: stackedBarWeekData,
+                positionColors: positionColors,
+                gridLines: [50, 100, 150],
+                chartTop: 200,
+                showPositions: Set(defPositions),
+                barSpacing: 4,
+                tooltipFont: .caption2.bold(),
+                showWeekLabels: true
+            )
+            .frame(height: 140)
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
             sectionHeader("Recent Form")
