@@ -403,15 +403,14 @@ struct DeckCard: View {
             
             // League name (above user name, under image, with small font)
             if !leagueName.isEmpty {
-                // PATCH: Always attach .padding to a view instance, not just .padding at the top-level.
-                Group {
-                    Text(leagueName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.75))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .padding(.top, 2)
-                }
+                // CHANGE: Remove Group, attach .padding directly to Text
+                Text(leagueName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.top, 2)
+                    .padding(.horizontal, 8)
             }
             // Name + Type/Grade
             HStack {
@@ -436,6 +435,7 @@ struct DeckCard: View {
             Text("Team: \(cardTeam)")
                 .font(.subheadline)
                 .foregroundColor(Color("DeckCardTeam", bundle: nil).opacity(0.95))
+                .padding(.horizontal, 8)
             
             // Grade badge
             HStack(spacing: 7) {
@@ -446,8 +446,10 @@ struct DeckCard: View {
                     .frame(width: 36, height: 36)
                 Spacer()
             }
+            .padding(.horizontal, 8)
             
             Divider()
+                .padding(.horizontal, 8)
             
             // Stats grid
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
@@ -465,6 +467,7 @@ struct DeckCard: View {
             }
             .opacity(statsOpacity)
             .animation(.easeInOut(duration: 0.5).delay(0.3), value: statsOpacity)
+            .padding(.horizontal, 8)
             
             // Accolades
             if model.championships > 0 || !myAccolades.isEmpty {
@@ -481,21 +484,21 @@ struct DeckCard: View {
                             .foregroundColor(.yellow)
                     }
                 }
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 13)
+                        .fill(
+                            LinearGradient(colors: [
+                                Color("DeckCardStatsBG", bundle: nil).opacity(0.93),
+                                Color("DeckCardStatsBG2", bundle: nil).opacity(0.89)
+                            ], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .shadow(color: Color.cyan.opacity(0.16), radius: 5, x: 0, y: 2)
+                )
             }
-            .padding(.top, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.bottom, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 13)
-                    .fill(
-                        LinearGradient(colors: [
-                            Color("DeckCardStatsBG", bundle: nil).opacity(0.93),
-                            Color("DeckCardStatsBG2", bundle: nil).opacity(0.89)
-                        ], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .shadow(color: Color.cyan.opacity(0.16), radius: 5, x: 0, y: 2)
-            )
         }
         .background(
             LinearGradient(
@@ -581,14 +584,13 @@ struct DeckCard: View {
         VStack(spacing: 6) {
             profileImage
             if !leagueName.isEmpty {
-                Group {
-                    Text(leagueName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.75))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .padding(.top, 2)
-                }
+                // CHANGE: Remove Group, attach .padding directly to Text
+                Text(leagueName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.top, 2)
             }
             Text(model.displayName)
                 .font(.system(size: 20, weight: .semibold))

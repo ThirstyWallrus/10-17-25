@@ -72,7 +72,8 @@ public struct StackedBarWeeklyChart: View {
             GeometryReader { geo in
                 let w = geo.size.width
                 let h = geo.size.height
-                let barCount = weekBars.count
+                let filteredWeekBars = weekBars.filter { $0.total > 0 }
+                let barCount = filteredWeekBars.count
                 let barWidth = barCount > 0 ? (w - CGFloat(barCount - 1) * barSpacing) / CGFloat(barCount) : 0
 
                 ZStack {
@@ -92,10 +93,11 @@ public struct StackedBarWeeklyChart: View {
                     
                     // Bars
                     HStack(alignment: .bottom, spacing: barSpacing) {
-                        ForEach(weekBars) { weekBar in
+                        ForEach(filteredWeekBars) { weekBar in
                             VStack(spacing: 0) {
-                                ZStack(alignment: .bottom) {
-                                    ForEach(weekBar.segments.filter { showPositions.contains($0.position) }) { seg in
+                                VStack(spacing: 0) {
+                                    Spacer()
+                                    ForEach(weekBar.segments.filter { showPositions.contains($0.position) }.reversed()) { seg in
                                         let segHeight = CGFloat(seg.value / chartTop) * h
                                         Rectangle()
                                             .fill(positionColors[seg.position] ?? Color.gray)
@@ -120,7 +122,7 @@ public struct StackedBarWeeklyChart: View {
                     
                     // Tooltip
                     if let t = tappedWeek, let weekBar = weekBars.first(where: { $0.id == t }) {
-                        let idx = weekBars.firstIndex(where: { $0.id == t }) ?? 0
+                        let idx = filteredWeekBars.firstIndex(where: { $0.id == t }) ?? 0
                         let x = CGFloat(idx) * (barWidth + barSpacing) + barWidth / 2
                         let tooltipY: CGFloat = {
                             // Place above the bar's top
