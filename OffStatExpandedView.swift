@@ -1,16 +1,10 @@
+// https://github.com/ThirstyWallrus/10-17-25/blob/a17b188b627ea4e728bbba5584f5d108dbc557af/OffStatExpandedView.swift
 //
 //  OffStatExpandedView.swift
 //  DynastyStatDrop
 //
-//  Refactored for centralized state management, all-time compliance, and continuity-safe weekly stat aggregation.
-//
-//  Instructions followed:
-//  - Uses @EnvironmentObject appSelection for team/league/season state
-//  - Weekly stat calculations exclude current week if incomplete
-//  - Detects "All Time" mode and uses aggregate stats if present
-//  - All position logic uses PositionNormalizer.normalize(_)
-//  - No legacy direct parameters for team/league
-//  - No code truncated
+//  Uses authoritative matchup.players_points when available; sums starters only when starters present.
+//  Falls back to deduped roster.weeklyScores when necessary.
 //
 
 import SwiftUI
@@ -72,55 +66,75 @@ struct OffStatExpandedView: View {
         return []
     }
 
+    // MARK: - Authoritative week points helper
+    private func authoritativePointsForWeek(team: TeamStanding, week: Int) -> [String: Double] {
+        // 1) players_points from matchup entry if available (prefer starters only)
+        if let league = league {
+            let season = (!isAllTime)
+                ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
+                : league.seasons.sorted { $0.id < $1.id }.last
+            if let season {
+                if let entries = season.matchupsByWeek?[week],
+                   let rosterIdInt = Int(team.id),
+                   let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
+                   let playersPoints = myEntry.players_points, !playersPoints.isEmpty {
+                    if let starters = myEntry.starters, !starters.isEmpty {
+                        var map: [String: Double] = [:]
+                        for pid in starters {
+                            if let pts = playersPoints[pid] {
+                                map[pid] = pts
+                            } else {
+                                map[pid] = 0.0
+                            }
+                        }
+                        return map
+                    } else {
+                        return playersPoints.mapValues { $0 }
+                    }
+                }
+            }
+        }
+        // 2) fallback: deduplicated roster.weeklyScores
+        var result: [String: Double] = [:]
+        var preferredMatchupId: Int? = nil
+        if let league = league {
+            let season = (!isAllTime)
+                ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
+                : league.seasons.sorted { $0.id < $1.id }.last
+            if let season, let entries = season.matchupsByWeek?[week], let rosterIdInt = Int(team.id) {
+                preferredMatchupId = entries.first(where: { $0.roster_id == rosterIdInt })?.matchup_id
+            }
+        }
+        for player in team.roster {
+            let scores = player.weeklyScores.filter { $0.week == week }
+            if scores.isEmpty { continue }
+            if let mid = preferredMatchupId, let matched = scores.first(where: { $0.matchup_id == mid }) {
+                result[player.id] = matched.points_half_ppr ?? matched.points
+            } else {
+                if let best = scores.max(by: { ($0.points_half_ppr ?? $0.points) < ($1.points_half_ppr ?? $1.points) }) {
+                    result[player.id] = best.points_half_ppr ?? best.points
+                }
+            }
+        }
+        return result
+    }
+
     // MARK: - Stacked Bar Chart Data
 
     private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
         guard let team else { return [] }
-        // Fallback grouping from roster weeklyScores
-        let rosterGrouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
         let sortedWeeks = validWeeks
         return sortedWeeks.map { week in
+            let playerPoints = authoritativePointsForWeek(team: team, week: week)
             var posSums: [String: Double] = [:]
-            // Try authoritative matchup.players_points first
-            if let league = league {
-                let season = (!isAllTime)
-                    ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
-                    : league.seasons.sorted { $0.id < $1.id }.last
-                if let season,
-                   let entries = season.matchupsByWeek?[week],
-                   let rosterIdInt = Int(team.id),
-                   let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
-                   let playersPoints = myEntry.players_points, !playersPoints.isEmpty {
-                    // Sum by position using roster mapping
-                    for (pid, pts) in playersPoints {
-                        if let player = team.roster.first(where: { $0.id == pid }) {
-                            let norm = PositionNormalizer.normalize(player.position)
-                            if ["QB","RB","WR","TE","K"].contains(norm) {
-                                posSums[norm, default: 0.0] += pts
-                            }
-                        }
+            for (pid, pts) in playerPoints {
+                if let player = team.roster.first(where: { $0.id == pid }) {
+                    let norm = PositionNormalizer.normalize(player.position)
+                    if ["QB","RB","WR","TE","K"].contains(norm) {
+                        posSums[norm, default: 0.0] += pts
                     }
-                } else {
-                    // Fallback to roster weeklyScores
-                    for pos in offPositions {
-                        let norm = PositionNormalizer.normalize(pos)
-                        let sum = rosterGrouped[week]?
-                            .filter { matchesNormalizedPosition($0, pos: pos) }
-                            .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
-                        posSums[norm] = sum
-                    }
-                }
-            } else {
-                // No league available: use roster weeklyScores
-                for pos in offPositions {
-                    let norm = PositionNormalizer.normalize(pos)
-                    let sum = rosterGrouped[week]?
-                        .filter { matchesNormalizedPosition($0, pos: pos) }
-                        .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
-                    posSums[norm] = sum
                 }
             }
-
             let segments = offPositions.map { pos in
                 let norm = PositionNormalizer.normalize(pos)
                 StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: norm, value: posSums[norm] ?? 0)
@@ -229,7 +243,7 @@ struct OffStatExpandedView: View {
             header
             sectionHeader("Offensive Weekly Trend")
             StackedBarWeeklyChart(
-            weekBars: stackedBarWeekData,  // Update to defense-specific data as needed
+            weekBars: stackedBarWeekData,
             positionColors: positionColors,
             showPositions: Set(offPositions),
             gridIncrement: 25,
@@ -388,6 +402,7 @@ struct OffStatExpandedView: View {
         .frame(maxWidth: .infinity)
     }
 
+    // Small components omitted for brevity (unchanged from previous file version)
     private struct EfficiencyBar: View {
         let ratio: Double
         let height: CGFloat
@@ -405,7 +420,6 @@ struct OffStatExpandedView: View {
             }
         }
     }
-
     private struct ConsistencyMeter: View {
         let stdDev: Double
         private var norm: Double { max(0, min(1, stdDev / 60.0)) }
