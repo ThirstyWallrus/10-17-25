@@ -189,16 +189,14 @@ struct OffStatExpandedView: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             sectionHeader("Offensive Weekly Trend")
-            // Chart: Excludes current week if incomplete, uses normalized positions
             StackedBarWeeklyChart(
-                weekBars: stackedBarWeekData,
-                positionColors: positionColors,
-                gridLines: [50, 100, 150],
-                chartTop: 200,
-                showPositions: Set(offPositions),
-                barSpacing: 4,
-                tooltipFont: .caption2.bold(),
-                showWeekLabels: true
+            weekBars: stackedBarWeekData,  // Update to defense-specific data as needed
+            positionColors: positionColors,
+            showPositions: Set(offPositions),
+            gridIncrement: 25,
+            barSpacing: 4,
+            tooltipFont: .caption2.bold(),
+            showWeekLabels: true
             )
             .frame(height: 140)
             sectionHeader("Lineup Efficiency")

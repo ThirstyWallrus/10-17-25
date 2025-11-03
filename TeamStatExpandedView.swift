@@ -194,14 +194,13 @@ struct TeamStatExpandedView: View {
             sectionHeader("Team Weekly Trend")
             // Chart: Excludes current week if incomplete, uses normalized positions
             StackedBarWeeklyChart(
-                weekBars: stackedBarWeekData,
-                positionColors: positionColors,
-                gridLines: [50, 100, 150, 200],
-                chartTop: max(200, (stackedBarWeekData.map { $0.total }.max() ?? 200) * 1.25),
-                showPositions: Set(teamPositions.map(PositionNormalizer.normalize)),
-                barSpacing: 4,
-                tooltipFont: .caption2.bold(),
-                showWeekLabels: true
+            weekBars: stackedBarWeekData,  // Update to team-specific data as needed
+            positionColors: positionColors,
+            showPositions: Set(teamPositions),
+            gridIncrement: 50,
+            barSpacing: 4,
+            tooltipFont: .caption2.bold(),
+            showWeekLabels: true
             )
             .frame(height: 160)
             sectionHeader("Lineup Efficiency")

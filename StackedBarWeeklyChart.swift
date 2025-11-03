@@ -5,7 +5,6 @@
 //  Created by Dynasty Stat Drop on 10/28/25.
 //
 
-
 //
 //  StackedBarWeeklyChart.swift
 //  DynastyStatDrop
@@ -38,9 +37,8 @@ public struct StackedBarWeeklyChart: View {
     
     public let weekBars: [WeekBarData]         // oldest to newest (left to right)
     public let positionColors: [String: Color] // normalized position -> Color
-    public let gridLines: [Double]             // e.g. [100, 200, 300]
-    public let chartTop: Double                // e.g. 400
     public let showPositions: Set<String>      // which positions to display per bar
+    public let gridIncrement: Double           // increment for grid lines (e.g., 25 or 50)
     public let barSpacing: CGFloat             // space between bars
     public let tooltipFont: Font               // font for tooltip
     public let showWeekLabels: Bool            // show week numbers below bars
@@ -50,18 +48,16 @@ public struct StackedBarWeeklyChart: View {
     public init(
         weekBars: [WeekBarData],
         positionColors: [String: Color],
-        gridLines: [Double],
-        chartTop: Double,
         showPositions: Set<String>,
+        gridIncrement: Double,
         barSpacing: CGFloat = 4,
         tooltipFont: Font = .caption2.bold(),
         showWeekLabels: Bool = true
     ) {
         self.weekBars = weekBars
         self.positionColors = positionColors
-        self.gridLines = gridLines
-        self.chartTop = chartTop
         self.showPositions = showPositions
+        self.gridIncrement = gridIncrement
         self.barSpacing = barSpacing
         self.tooltipFont = tooltipFont
         self.showWeekLabels = showWeekLabels
@@ -75,11 +71,29 @@ public struct StackedBarWeeklyChart: View {
                 let filteredWeekBars = weekBars.filter { $0.total > 0 }
                 let barCount = filteredWeekBars.count
                 let barWidth = barCount > 0 ? (w - CGFloat(barCount - 1) * barSpacing) / CGFloat(barCount) : 0
+                
+                let maxTotal = filteredWeekBars.map { $0.total }.max() ?? 0.0
+                let effectiveChartTop = maxTotal > 0 ? ceil(maxTotal / gridIncrement) * gridIncrement : gridIncrement
+                let gridLines = stride(from: gridIncrement, through: effectiveChartTop, by: gridIncrement).map { $0 }
 
                 ZStack {
+                    // Bottom line at 0
+                    let y0 = h
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: y0))
+                        p.addLine(to: CGPoint(x: w, y: y0))
+                    }
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    
+                    // 0 label
+                    Text("0")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.40))
+                        .position(x: 28, y: y0 - 8)
+
                     // Grid lines
                     ForEach(gridLines, id: \.self) { lineValue in
-                        let y = h - CGFloat(lineValue / chartTop) * h
+                        let y = h - CGFloat(lineValue / effectiveChartTop) * h
                         Path { p in
                             p.move(to: CGPoint(x: 0, y: y))
                             p.addLine(to: CGPoint(x: w, y: y))
@@ -98,7 +112,7 @@ public struct StackedBarWeeklyChart: View {
                                 VStack(spacing: 0) {
                                     Spacer()
                                     ForEach(weekBar.segments.filter { showPositions.contains($0.position) }.reversed()) { seg in
-                                        let segHeight = CGFloat(seg.value / chartTop) * h
+                                        let segHeight = CGFloat(seg.value / effectiveChartTop) * h
                                         Rectangle()
                                             .fill(positionColors[seg.position] ?? Color.gray)
                                             .frame(height: segHeight)
@@ -127,7 +141,7 @@ public struct StackedBarWeeklyChart: View {
                         let tooltipY: CGFloat = {
                             // Place above the bar's top
                             let barTotal = weekBar.total
-                            return h - CGFloat(barTotal / chartTop) * h - 40
+                            return h - CGFloat(barTotal / effectiveChartTop) * h - 40
                         }()
                         TooltipView(weekBar: weekBar, positionColors: positionColors, font: tooltipFont)
                             .position(x: min(max(70, x), w - 70), y: max(30, tooltipY))
