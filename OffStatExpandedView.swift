@@ -135,11 +135,12 @@ struct OffStatExpandedView: View {
                     }
                 }
             }
-            let segments = offPositions.map { pos in
+            // Build segments with explicit type to avoid ambiguous/failed casts
+            let segments: [StackedBarWeeklyChart.WeekBarData.Segment] = offPositions.map { pos in
                 let norm = PositionNormalizer.normalize(pos)
-                StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: norm, value: posSums[norm] ?? 0)
+                return StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: norm, value: posSums[norm] ?? 0)
             }
-            return StackedBarWeeklyChart.WeekBarData(id: week, segments: segments as! [StackedBarWeeklyChart.WeekBarData.Segment])
+            return StackedBarWeeklyChart.WeekBarData(id: week, segments: segments)
         }
     }
 
@@ -402,7 +403,7 @@ struct OffStatExpandedView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // Small components omitted for brevity (unchanged from previous file version)
+    // Small components omitted for brevity (unchanged)
     private struct EfficiencyBar: View {
         let ratio: Double
         let height: CGFloat
