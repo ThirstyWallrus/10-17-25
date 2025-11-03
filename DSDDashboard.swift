@@ -781,9 +781,22 @@ struct DSDDashboard: View {
                         emptyDetail
                     }
                 }
-            case 2:
+            case 1:
+                // Use the new TeamStatExpandedView (consistent layout with Off/Def)
                 ScrollView {
-                    OffensiveStatDropView()
+                    TeamStatExpandedView(aggregatedAllTime: { team in
+                        return self.aggregatedStats(for: team)
+                    })
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(4)
+            case 2:
+                // Use OffStatExpandedView (new consistent offense panel)
+                ScrollView {
+                    OffStatExpandedView()
                         .padding(.horizontal, 8)
                         .padding(.top, 8)
                         .padding(.bottom, 12)
