@@ -689,21 +689,22 @@ struct DSDDashboard: View {
         }
     }
     @ViewBuilder
-        private func flipFaceContainer(index: Int, glow: Color) -> some View {
-            let angle = 180.0 * Double(flipModel.flipProgress)
-            ZStack {
-                if let team = selectedTeam {
-                    frontSummaryFlip(index: index, team: team, glow: glow)
-                        .opacity(angle < 90 ? 1 : 0)
-                        .rotation3DEffect(.degrees(angle), axis: (0,1,0), perspective: 0.9/900)
-                }
-                backDetailFlip(index: index, glow: glow)
-                    .opacity(angle >= 90 ? 1 : 0)
-                    .rotation3DEffect(.degrees(angle - 180), axis: (0,1,0), perspective: 0.9/900)
-                closeButton
+    private func flipFaceContainer(index: Int, glow: Color) -> some View {
+        let angle = 180.0 * Double(flipModel.flipProgress)
+        ZStack {
+            if let team = selectedTeam {
+                frontSummaryFlip(index: index, team: team, glow: glow)
+                    .opacity(angle < 90 ? 1 : 0)
+                    .rotation3DEffect(.degrees(angle), axis: (0,1,0), perspective: 0.9/900)
             }
-            .clipped()
+            backDetailFlip(index: index, glow: glow)
+                .opacity(angle >= 90 ? 1 : 0)
+                .rotation3DEffect(.degrees(angle - 180), axis: (0,1,0), perspective: 0.9/900)
+                .rotation3DEffect(.degrees(180), axis: (0,1,0)) // <-- Fix
+            closeButton
         }
+        .clipped()
+    }
     private var closeButton: some View {
         VStack {
             HStack {
@@ -780,50 +781,24 @@ struct DSDDashboard: View {
                         emptyDetail
                     }
                 }
-            case 1:
-                // TeamStatExpandedView only takes aggregatedAllTime closure
+            case 2:
                 ScrollView {
-                    TeamStatExpandedView(
-                        aggregatedAllTime: { self.aggregatedStats(for: $0) }
-                    )
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
+                    OffensiveStatDropView()
+                        .padding(.horizontal, 8)
+                        .padding(.top, 8)
+                        .padding(.bottom, 12)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(4)
-            case 2:
-                // Use OffStatExpandedView for offense (see OffStatExpandedView.swift)
-                if let team = selectedTeam, let league = selectedLeague {
-                    ScrollView {
-                        OffStatExpandedView(
-                            team: team,
-                            league: league,
-                            personality: userStatDropPersonality
-                        )
-                        .padding(.horizontal, 8)
-                        .padding(.top, 8)
-                        .padding(.bottom, 12)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .padding(4)
-                } else { emptyDetail }
             case 3:
-                // Use DefStatExpandedView for defense (see DefStatExpandedView.swift)
-                if let team = selectedTeam, let league = selectedLeague {
-                    ScrollView {
-                        DefStatExpandedView(
-                            team: team,
-                            league: league,
-                            personality: userStatDropPersonality
-                        )
+                ScrollView {
+                    DefStatExpandedView()
                         .padding(.horizontal, 8)
                         .padding(.top, 8)
                         .padding(.bottom, 12)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .padding(4)
-                } else { emptyDetail }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(4)
             default:
                 emptyDetail
             }
