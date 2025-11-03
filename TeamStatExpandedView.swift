@@ -74,21 +74,70 @@ struct TeamStatExpandedView: View {
     // MARK: - Stacked Bar Chart Data (whole team)
     private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
         guard let team else { return [] }
-        let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
+        // Fallback grouped roster weeklyScores for weeks where players_points is missing
+        let rosterGrouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
         let sortedWeeks = validWeeks
         return sortedWeeks.map { week in
-            // Sum scores by normalized position for this week
-            let posSums: [String: Double] = teamPositions.reduce(into: [:]) { dict, pos in
-                let norm = PositionNormalizer.normalize(pos)
-                dict[norm] = grouped[week]?
-                    .filter { matchesNormalizedPosition($0, pos: pos) }
-                    .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+            var posSums: [String: Double] = [:]
+            // Try authoritative source: matchup.players_points for this team/week
+            if let league = league {
+                // Find season object for selection (or latest for All Time)
+                let season = (!isAllTime)
+                    ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
+                    : league.seasons.sorted { $0.id < $1.id }.last
+                if let season {
+                    if let entries = season.matchupsByWeek?[week],
+                       let rosterIdInt = Int(team.id),
+                       let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
+                       let playersPoints = myEntry.players_points, !playersPoints.isEmpty {
+                        // Use players_points authoritative mapping
+                        for (pid, pts) in playersPoints {
+                            // Find player in roster to detect position
+                            if let player = team.roster.first(where: { $0.id == pid }) {
+                                let norm = PositionNormalizer.normalize(player.position)
+                                posSums[norm, default: 0.0] += pts
+                            } else {
+                                // If not on roster (rare), skip — roster-based charts focus on roster contributions
+                                continue
+                            }
+                        }
+                    } else {
+                        // Fallback: use roster.weeklyScores grouping if players_points not available
+                        for pos in teamPositions {
+                            let norm = PositionNormalizer.normalize(pos)
+                            let sum = rosterGrouped[week]?
+                                .filter { matchesNormalizedPosition($0, pos: pos) }
+                                .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                            posSums[norm] = sum
+                        }
+                    }
+                } else {
+                    // No season found — fallback to roster weeklyScores
+                    for pos in teamPositions {
+                        let norm = PositionNormalizer.normalize(pos)
+                        let sum = rosterGrouped[week]?
+                            .filter { matchesNormalizedPosition($0, pos: pos) }
+                            .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                        posSums[norm] = sum
+                    }
+                }
+            } else {
+                // No league — rely on roster data
+                for pos in teamPositions {
+                    let norm = PositionNormalizer.normalize(pos)
+                    let sum = rosterGrouped[week]?
+                        .filter { matchesNormalizedPosition($0, pos: pos) }
+                        .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                    posSums[norm] = sum
+                }
             }
+            
             let segments = teamPositions.map { pos in
-                StackedBarWeeklyChart.WeekBarData.Segment(
+                let norm = PositionNormalizer.normalize(pos)
+                return StackedBarWeeklyChart.WeekBarData.Segment(
                     id: pos,
-                    position: PositionNormalizer.normalize(pos),
-                    value: posSums[PositionNormalizer.normalize(pos)] ?? 0
+                    position: norm,
+                    value: posSums[norm] ?? 0
                 )
             }
             return StackedBarWeeklyChart.WeekBarData(id: week, segments: segments)

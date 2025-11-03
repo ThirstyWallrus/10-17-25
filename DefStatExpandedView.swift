@@ -76,13 +76,50 @@ struct DefStatExpandedView: View {
 
     private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
         guard let team else { return [] }
-        let grouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
+        // Fallback grouping from roster weeklyScores
+        let rosterGrouped = Dictionary(grouping: team.roster.flatMap { $0.weeklyScores }, by: { $0.week })
         let sortedWeeks = validWeeks
         return sortedWeeks.map { week in
-            // For each position, sum scores for this week
-            let posSums: [String: Double] = defPositions.reduce(into: [:]) { dict, pos in
-                dict[pos] = grouped[week]?.filter { matchesNormalizedPosition($0, pos: pos) }.reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+            var posSums: [String: Double] = [:]
+            // Try authoritative source: matchup.players_points
+            if let league = league {
+                let season = (!isAllTime)
+                    ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
+                    : league.seasons.sorted { $0.id < $1.id }.last
+                if let season,
+                   let entries = season.matchupsByWeek?[week],
+                   let rosterIdInt = Int(team.id),
+                   let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
+                   let playersPoints = myEntry.players_points, !playersPoints.isEmpty {
+                    for (pid, pts) in playersPoints {
+                        if let player = team.roster.first(where: { $0.id == pid }) {
+                            let norm = PositionNormalizer.normalize(player.position)
+                            if ["DL","LB","DB"].contains(norm) {
+                                posSums[norm, default: 0.0] += pts
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to roster weeklyScores
+                    for pos in defPositions {
+                        let norm = PositionNormalizer.normalize(pos)
+                        let sum = rosterGrouped[week]?
+                            .filter { matchesNormalizedPosition($0, pos: pos) }
+                            .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                        posSums[norm] = sum
+                    }
+                }
+            } else {
+                // No league: use roster weeklyScores
+                for pos in defPositions {
+                    let norm = PositionNormalizer.normalize(pos)
+                    let sum = rosterGrouped[week]?
+                        .filter { matchesNormalizedPosition($0, pos: pos) }
+                        .reduce(0) { $0 + ($1.points_half_ppr ?? $1.points) } ?? 0
+                    posSums[norm] = sum
+                }
             }
+
             let segments = defPositions.map { pos in
                 StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: pos, value: posSums[pos] ?? 0)
             }
@@ -385,4 +422,3 @@ struct DefStatExpandedView: View {
         }
     }
 }
-
