@@ -87,6 +87,23 @@ public struct StackedBarWeeklyChart: View {
         self.aggregateToOffDef = aggregateToOffDef
     }
 
+    // Helper: return a color for a normalized position using the provided positionColors, falling back to sensible defaults.
+    private func colorForPosition(_ pos: String) -> Color {
+        let norm = PositionNormalizer.normalize(pos)
+        if let c = positionColors[norm] { return c }
+        switch norm {
+        case PositionNormalizer.normalize("QB"): return .red
+        case PositionNormalizer.normalize("RB"): return .green
+        case PositionNormalizer.normalize("WR"): return .blue
+        case PositionNormalizer.normalize("TE"): return .yellow
+        case PositionNormalizer.normalize("K"):  return Color.purple
+        case PositionNormalizer.normalize("DL"): return .orange
+        case PositionNormalizer.normalize("LB"): return Color.purple.opacity(0.7)
+        case PositionNormalizer.normalize("DB"): return .pink
+        default: return .gray
+        }
+    }
+
     public var body: some View {
         VStack(spacing: 16) {
             GeometryReader { geo in
@@ -261,16 +278,48 @@ public struct StackedBarWeeklyChart: View {
            
             // Legend (only when aggregated into Offense/Defense)
             if aggregateToOffDef {
-                HStack(spacing: 16) {
-                    HStack(spacing: 6) {
-                        Circle().fill(Color.red).frame(width: 10, height: 10)
-                        Text("Offense").foregroundColor(.red).font(.caption2).bold()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 16) {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.red).frame(width: 10, height: 10)
+                            Text("Offense").foregroundColor(.red).font(.caption2).bold()
+                        }
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.blue).frame(width: 10, height: 10)
+                            Text("Defense").foregroundColor(.blue).font(.caption2).bold()
+                        }
+                        Spacer()
                     }
-                    HStack(spacing: 6) {
-                        Circle().fill(Color.blue).frame(width: 10, height: 10)
-                        Text("Defense").foregroundColor(.blue).font(.caption2).bold()
+
+                    // Offense positions legend row (QB, RB, WR, TE, K)
+                    HStack(spacing: 12) {
+                        ForEach(["QB","RB","WR","TE","K"], id: \.self) { pos in
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(colorForPosition(pos))
+                                    .frame(width: 10, height: 10)
+                                Text(pos)
+                                    .font(.caption2)
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        Spacer()
                     }
-                    Spacer()
+
+                    // Defense positions legend row (DL, LB, DB)
+                    HStack(spacing: 12) {
+                        ForEach(["DL","LB","DB"], id: \.self) { pos in
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(colorForPosition(pos))
+                                    .frame(width: 10, height: 10)
+                                Text(pos)
+                                    .font(.caption2)
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        Spacer()
+                    }
                 }
                 .padding(.horizontal, 6)
             }
