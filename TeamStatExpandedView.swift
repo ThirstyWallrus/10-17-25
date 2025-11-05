@@ -8,6 +8,16 @@
 //  to sum only starters' points when starters are present (to match MatchupView).
 //  Adjusted stat bubble row to fit inside the card and removed MPF bubble.
 //
+//  FIX: Correct PPW (seasonAvg) calculation — previously averaged across weeks
+//  that included future/incomplete weeks (zeros), yielding an artificially low
+//  average. Now we compute averages only across weeks with actual data (non-zero),
+//  and fall back to aggregated all-time or stored team.teamPointsPerWeek when no
+//  completed weeks are present. Last-3 average likewise uses the most recent
+//  non-empty weeks.
+//
+//  NOTE: Restored PPW responsive font behavior — the PPW value will shrink to fit
+//  inside the bubble if the number is wide. This uses minimumScaleFactor + lineLimit(1).
+//
 
 import SwiftUI
 
@@ -180,17 +190,39 @@ struct TeamStatExpandedView: View {
         stackedBarWeekData.map { $0.total }
     }
     
-    private var weeksPlayed: Int { sideWeeklyPoints.count }
+    // Fix: compute weekly points that are considered "valid" (non-zero) to avoid dividing by future zero weeks.
+    // Use non-zero totals for average calculations. This mirrors how we include only completed weeks in other services.
+    private var sideWeeklyPointsNonZero: [Double] {
+        // Consider a week valid if total > 0 OR if there's at least one non-zero segment (some leagues may record 0.0 for a real week)
+        // stackedBarWeekData already sums segments; treat totals > 0 as valid
+        let nonZero = sideWeeklyPoints.filter { $0 > 0.0 }
+        // If we don't have any non-zero weeks but team.weeklyActualLineupPoints exists, use those entries
+        if nonZero.isEmpty, let team = team, let weekly = team.weeklyActualLineupPoints {
+            let vals = weekly.keys.sorted().map { weekly[$0] ?? 0.0 }.filter { $0 > 0.0 }
+            if !vals.isEmpty { return vals }
+        }
+        return nonZero
+    }
+    
+    private var weeksPlayed: Int { sideWeeklyPointsNonZero.count }
     private var last3Avg: Double {
         guard weeksPlayed > 0 else { return 0 }
-        return sideWeeklyPoints.suffix(3).reduce(0,+) / Double(min(3, weeksPlayed))
+        // Use most recent non-zero weeks — stack preserves week order by validWeeks mapping,
+        // so take last n elements from sideWeeklyPoints filtered to non-zero.
+        let recent = sideWeeklyPointsNonZero.suffix(3)
+        return recent.reduce(0,+) / Double(min(3, recent.count))
     }
     private var seasonAvg: Double {
-        guard weeksPlayed > 0 else {
-            if let agg = aggregate { return agg.avgTeamPPW }
-            return team?.teamPointsPerWeek ?? 0
+        // Primary: average of non-zero weekly totals (i.e., completed weeks with data)
+        if weeksPlayed > 0 {
+            return sideWeeklyPointsNonZero.reduce(0,+) / Double(weeksPlayed)
         }
-        return sideWeeklyPoints.reduce(0,+) / Double(weeksPlayed)
+        // Fallback 1: aggregated all-time average if available
+        if let agg = aggregate {
+            return agg.avgTeamPPW
+        }
+        // Fallback 2: stored team value (may be precomputed or conservative)
+        return team?.teamPointsPerWeek ?? 0
     }
     private var formDelta: Double { last3Avg - seasonAvg }
     private var formDeltaColor: Color {
@@ -217,7 +249,7 @@ struct TeamStatExpandedView: View {
     private var stdDev: Double {
         guard weeksPlayed > 1 else { return 0 }
         let mean = seasonAvg
-        let variance = sideWeeklyPoints.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeksPlayed)
+        let variance = sideWeeklyPointsNonZero.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeksPlayed)
         return sqrt(variance)
     }
     private var consistencyDescriptor: String {
@@ -311,7 +343,7 @@ struct TeamStatExpandedView: View {
                     return t.defensiveManagementPercent ?? 0
                 }
             }()
-            // PPW value (season vs all-time)
+            // PPW value (season vs all-time) — IMPORTANT: use DSDStatsService filtered helper when available
             let ppwVal: Double = {
                 if isAllTime { return aggForTeam?.avgTeamPPW ?? t.teamPointsPerWeek }
                 // compute season average via DSDStatsService filtered helper (use shared)
@@ -405,6 +437,8 @@ struct TeamStatExpandedView: View {
                             Text(String(format: "%.0f", teamPointsFor))
                                 .font(.system(size: bubbleSize * 0.30, weight: .bold))
                                 .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
                                 .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
                         } caption: {
                             Text("PF")
@@ -417,6 +451,8 @@ struct TeamStatExpandedView: View {
                             Text(String(format: "%.0f%%", managementPercent))
                                 .font(.system(size: bubbleSize * 0.28, weight: .bold))
                                 .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
                                 .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
                         } caption: {
                             Text("M%")
@@ -424,12 +460,18 @@ struct TeamStatExpandedView: View {
                                 .foregroundColor(.white.opacity(0.8))
                         }
                         
-                        // 4) PPW
+                        // 4) PPW — RESTORED RESPONSIVE FONT BEHAVIOR:
+                        // Use a large base font but allow minimumScaleFactor and single-line truncation so
+                        // multi-digit numbers shrink to fit rather than wrap or overflow.
                         statBubble(width: bubbleSize, height: bubbleSize) {
+                            // We'll use a fairly large base size but allow the text to scale down
+                            // to fit the bubble when necessary.
                             Text(String(format: "%.2f", seasonAvg))
-                                .font(.system(size: bubbleSize * 0.26, weight: .bold))
+                                .font(.system(size: bubbleSize * 0.36, weight: .bold, design: .rounded))
                                 .foregroundColor(.white)
-                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.4) // allow shrinking down to 40% of base size
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78, alignment: .center)
                         } caption: {
                             Text("PPW")
                                 .font(.caption2)
@@ -697,4 +739,3 @@ struct TeamStatExpandedView: View {
         }
     }
 }
-
