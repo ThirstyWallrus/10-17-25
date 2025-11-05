@@ -219,7 +219,7 @@ public struct StackedBarWeeklyChart: View {
                             .font(.caption2)
                             .foregroundColor(.white.opacity(0.40))
                             .frame(width: measured, alignment: .trailing)
-                            .position(x: labelCenterX, y: y - 8)
+                            .position(x: labelCenterX, y: y - 2)
                     }
                    
                     // Bars
