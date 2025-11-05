@@ -600,6 +600,7 @@ struct TeamStatExpandedView: View {
             
             sectionHeader("Team Weekly Trend")
             // Chart: Excludes current week if incomplete, uses normalized positions
+            // UPDATED: aggregateToOffDef = true so each weekly bar shows Offense (red) and Defense (blue) only.
             StackedBarWeeklyChart(
                 weekBars: stackedBarWeekData,
                 positionColors: positionColors,
@@ -607,7 +608,8 @@ struct TeamStatExpandedView: View {
                 gridIncrement: 50,
                 barSpacing: 4,
                 tooltipFont: .caption2.bold(),
-                showWeekLabels: true
+                showWeekLabels: true,
+                aggregateToOffDef: true
             )
             .frame(height: 160)
             
