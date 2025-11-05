@@ -241,6 +241,8 @@ struct DSDDashboard: View {
             if appSelection.leagues.isEmpty {
                 loadSavedLeagues()
             }
+            // KEEP appSelection.currentUsername in sync with the motherview's selected username
+            appSelection.currentUsername = authViewModel.currentUsername
         }
         .onChange(of: appSelection.leagues) { _, _ in syncInitialSelections(replaceTeam: true) }
         .onChange(of: appSelection.selectedLeagueId) { _, _ in
@@ -249,6 +251,10 @@ struct DSDDashboard: View {
             loadCustomizationIfAvailable(force: true)
         }
         .onChange(of: authViewModel.userTeam) { _, _ in syncInitialSelections(replaceTeam: true) }
+        // Keep appSelection.currentUsername updated whenever the authViewModel's currentUsername changes
+        .onChange(of: authViewModel.currentUsername) { _, _ in
+            appSelection.currentUsername = authViewModel.currentUsername
+        }
         .onChange(of: appSelection.selectedSeason) { _, _ in handleSeasonChange() }
         .onChange(of: selectedStandings) { _, _ in enforceIntegrityAndPersist() }
         .onChange(of: selectedTeamStats) { _, _ in enforceIntegrityAndPersist() }
@@ -449,6 +455,7 @@ struct DSDDashboard: View {
         appSelection.selectedTeamId = nil
         appSelection.selectedSeason = ""
         appSelection.userTeam = ""
+        appSelection.currentUsername = nil
         leagueManager.clearInMemory()
     }
 
@@ -666,7 +673,7 @@ struct DSDDashboard: View {
                                     .overlay(
                                         Group {
                                             if flipModel.expandedSection == index {
-                                                flipFaceContainer(index: index, glow: glow)
+                                                flipFaceContainer(index: index, team: selectedTeam, glow: glow)
                                             } else {
                                                 customizationContent(index: index, glow: glow)
                                             }
@@ -689,10 +696,10 @@ struct DSDDashboard: View {
         }
     }
     @ViewBuilder
-    private func flipFaceContainer(index: Int, glow: Color) -> some View {
+    private func flipFaceContainer(index: Int, team: TeamStanding?, glow: Color) -> some View {
         let angle = 180.0 * Double(flipModel.flipProgress)
         ZStack {
-            if let team = selectedTeam {
+            if let team = team {
                 frontSummaryFlip(index: index, team: team, glow: glow)
                     .opacity(angle < 90 ? 1 : 0)
                     .rotation3DEffect(.degrees(angle), axis: (0,1,0), perspective: 0.9/900)

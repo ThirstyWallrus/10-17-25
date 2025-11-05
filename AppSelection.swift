@@ -33,7 +33,7 @@ final class AppSelection: ObservableObject {
     // Store the most recent Sleeper username used for import, for team matching
     @Published var lastImportedSleeperUsername: String? = nil
     @Published var lastImportedSleeperUserId: String? = nil
-
+    @Published var currentUsername: String? = nil
     // Helper to get last selected league key
     private func lastSelectedLeagueKey(for username: String) -> String {
         "dsd.lastSelectedLeague.\(username)"

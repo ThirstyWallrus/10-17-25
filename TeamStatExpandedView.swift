@@ -509,7 +509,20 @@ struct TeamStatExpandedView: View {
             // Top: keep everything contained inside the card (Title centered + stat bubble row).
             // Use GeometryReader locally to size bubbles to available width so they never overflow.
             VStack(spacing: 8) {
-                Text("Team Drop")
+                // NEW: Use the appSelection.currentUsername as primary viewer name when available.
+                // Falls back to aggregated owner display name or team name when currentUsername is nil.
+                let viewerName: String = {
+                    if let uname = appSelection.currentUsername, !uname.isEmpty { return uname }
+                    if let team = team {
+                        if isAllTime {
+                            return aggregatedAllTime(team)?.teamName ?? team.name
+                        }
+                        return team.name
+                    }
+                    return appSelection.userTeam.isEmpty ? "Team" : appSelection.userTeam
+                }()
+                
+                Text("\(viewerName)'s Team Drop")
                     .font(.custom("Phatt", size: 20))
                     .bold()
                     .foregroundColor(.yellow)
