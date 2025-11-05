@@ -21,6 +21,50 @@
 
 import SwiftUI
 
+// Shared icon computation so TeamStatExpandedView and BalanceDetailSheet use identical logic.
+private struct EfficiencyIconComputer {
+    /// Returns (offIcon, defIcon) using deterministic rules:
+    /// - Flame (🔥) appears when offense >= 90.00% (off side), but if defense >= 90.00% the flame is placed on defense instead (defense takes precedence).
+    /// - Snowflake (❄️):
+    ///     • Offense gets ❄️ if offense < 80.00% (unconditional — it does not depend on defense).
+    ///     • Otherwise, if offense >= 80.00% and defense < 80.00% then defense gets ❄️.
+    /// - Sun (☀️) appears for values in [80.00%, 90.00%) and overrides other icons for that side.
+    /// Each side receives at most one emoji; defense >= 90 wins flame placement.
+    static func computeIcons(off: Double, def: Double) -> (offIcon: String, defIcon: String) {
+        var offIcon = ""
+        var defIcon = ""
+
+        // 1) Flame: defense takes precedence if both >= 90
+        if def >= 90.0 {
+            defIcon = "🔥"
+        } else if off >= 90.0 {
+            offIcon = "🔥"
+        }
+
+        // 2) Snowflake: OFFENSE-first rule (off < 80 always gets ❄️).
+        // If offense is below 80, give offense the snowflake (replacing any previous off icon).
+        if off < 80.0 {
+            offIcon = "❄️"
+        } else {
+            // Only consider placing a snowflake on defense if offense is NOT below 80.
+            // Do not overwrite an existing flame on defense (defIcon == "🔥").
+            if def < 80.0 && defIcon.isEmpty {
+                defIcon = "❄️"
+            }
+        }
+
+        // 3) Sun overrides for each side if in [80, 90)
+        if off >= 80.0 && off < 90.0 {
+            offIcon = "☀️"
+        }
+        if def >= 80.0 && def < 90.0 {
+            defIcon = "☀️"
+        }
+
+        return (offIcon, defIcon)
+    }
+}
+
 struct TeamStatExpandedView: View {
     @EnvironmentObject var appSelection: AppSelection
     // Closure returns (optional) aggregated all time stats wrapper for this team
@@ -297,47 +341,10 @@ struct TeamStatExpandedView: View {
         LinearGradient(colors: [Color.green, Color.blue], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
     
-    // NEW: Compute icons deterministically following your rules (updated snowflake logic):
-    // - Flame (🔥) appears when offense >= 90.00% (off side), but if defense >= 90.00% the flame is placed on defense instead (defense takes precedence).
-    // - Snowflake (❄️):
-    //     • Offense gets ❄️ if offense < 80.00% (unconditional — it does not depend on defense).
-    //     • Otherwise, if offense >= 80.00% and defense < 80.00% then defense gets ❄️.
-    // - Sun (☀️) appears for values in [80.00%, 90.00%) and overrides other icons for that side.
-    // Precedence and edge cases are handled so each side gets at most one emoji; defense >= 90 still wins flame placement.
+    // Use shared icon computation
     private func computeIcons() -> (off: String, def: String) {
-        let off = offenseMgmtPercent
-        let def = defenseMgmtPercent
-        var offIcon = ""
-        var defIcon = ""
-        
-        // 1) Flame: defense takes precedence if both >= 90
-        if def >= 90.0 {
-            defIcon = "🔥"
-        } else if off >= 90.0 {
-            offIcon = "🔥"
-        }
-        
-        // 2) Snowflake: OFFENSE-first rule (off < 80 always gets ❄️).
-        // If offense is below 80, give offense the snowflake (replacing any previous off icon).
-        if off < 80.0 {
-            offIcon = "❄️"
-        } else {
-            // Only consider placing a snowflake on defense if offense is NOT below 80.
-            // Do not overwrite an existing flame on defense (defIcon == "🔥").
-            if def < 80.0 && defIcon.isEmpty {
-                defIcon = "❄️"
-            }
-        }
-        
-        // 3) Sun overrides for each side if in [80, 90)
-        if off >= 80.0 && off < 90.0 {
-            offIcon = "☀️"
-        }
-        if def >= 80.0 && def < 90.0 {
-            defIcon = "☀️"
-        }
-        
-        return (offIcon, defIcon)
+        let icons = EfficiencyIconComputer.computeIcons(off: offenseMgmtPercent, def: defenseMgmtPercent)
+        return (icons.offIcon, icons.defIcon)
     }
     private var offIcon: String { computeIcons().off }
     private var defIcon: String { computeIcons().def }
@@ -951,6 +958,12 @@ private struct BalanceDetailSheet: View {
     let balancePct: Double
     let tagline: String
     
+    // Use the same shared icon computation so rules match TeamStatExpandedView exactly
+    private var icons: (off: String, def: String) {
+        let i = EfficiencyIconComputer.computeIcons(off: offensePct, def: defensePct)
+        return (i.offIcon, i.defIcon)
+    }
+    
     var body: some View {
         VStack(spacing: 12) {
             Capsule()
@@ -962,7 +975,7 @@ private struct BalanceDetailSheet: View {
                 .foregroundColor(.yellow)
             HStack(spacing: 16) {
                 VStack(spacing: 6) {
-                    Text("🔥 Offense")
+                    Text("\(icons.off) Offense")
                         .font(.subheadline).bold()
                         .foregroundColor(.white)
                     // Use .tint(Color) instead of attempting to pass a LinearGradient (which is not a Color)
@@ -974,7 +987,7 @@ private struct BalanceDetailSheet: View {
                         .foregroundColor(.white.opacity(0.8))
                 }
                 VStack(spacing: 6) {
-                    Text("❄️ Defense")
+                    Text("\(icons.def) Defense")
                         .font(.subheadline).bold()
                         .foregroundColor(.white)
                     // Use a solid Color tint for compatibility with the API
