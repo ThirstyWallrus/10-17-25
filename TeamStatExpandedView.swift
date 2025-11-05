@@ -296,8 +296,51 @@ struct TeamStatExpandedView: View {
     private var defenseGradient: LinearGradient {
         LinearGradient(colors: [Color.green, Color.blue], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
-    private var offIcon: String { "🔥" }
-    private var defIcon: String { "❄️" }
+    
+    // NEW: Compute icons deterministically following your rules (updated snowflake logic):
+    // - Flame (🔥) appears when offense >= 90.00% (off side), but if defense >= 90.00% the flame is placed on defense instead (defense takes precedence).
+    // - Snowflake (❄️):
+    //     • Offense gets ❄️ if offense < 80.00% (unconditional — it does not depend on defense).
+    //     • Otherwise, if offense >= 80.00% and defense < 80.00% then defense gets ❄️.
+    // - Sun (☀️) appears for values in [80.00%, 90.00%) and overrides other icons for that side.
+    // Precedence and edge cases are handled so each side gets at most one emoji; defense >= 90 still wins flame placement.
+    private func computeIcons() -> (off: String, def: String) {
+        let off = offenseMgmtPercent
+        let def = defenseMgmtPercent
+        var offIcon = ""
+        var defIcon = ""
+        
+        // 1) Flame: defense takes precedence if both >= 90
+        if def >= 90.0 {
+            defIcon = "🔥"
+        } else if off >= 90.0 {
+            offIcon = "🔥"
+        }
+        
+        // 2) Snowflake: OFFENSE-first rule (off < 80 always gets ❄️).
+        // If offense is below 80, give offense the snowflake (replacing any previous off icon).
+        if off < 80.0 {
+            offIcon = "❄️"
+        } else {
+            // Only consider placing a snowflake on defense if offense is NOT below 80.
+            // Do not overwrite an existing flame on defense (defIcon == "🔥").
+            if def < 80.0 && defIcon.isEmpty {
+                defIcon = "❄️"
+            }
+        }
+        
+        // 3) Sun overrides for each side if in [80, 90)
+        if off >= 80.0 && off < 90.0 {
+            offIcon = "☀️"
+        }
+        if def >= 80.0 && def < 90.0 {
+            defIcon = "☀️"
+        }
+        
+        return (offIcon, defIcon)
+    }
+    private var offIcon: String { computeIcons().off }
+    private var defIcon: String { computeIcons().def }
     
     private func generateBalanceTagline(off: Double, def: Double, balance: Double) -> String {
         if balance < 5 { return "Perfectly synced! Your team is a well-oiled machine." }
