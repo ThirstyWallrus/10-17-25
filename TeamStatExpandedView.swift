@@ -28,6 +28,8 @@ struct TeamStatExpandedView: View {
     
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
+    // New: show detailed balance modal for the Full Team Efficiency Spotlight
+    @State private var showBalanceDetail = false
     
     // Positions used for the whole-team breakdown (offense + defense)
     private let teamPositions: [String] = ["QB","RB","WR","TE","K","DL","LB","DB"]
@@ -245,6 +247,65 @@ struct TeamStatExpandedView: View {
         return (teamPointsFor / teamMaxPointsFor) * 100
     }
     
+    // MARK: - Full Team Efficiency Spotlight (offense vs defense)
+    // Prefer aggregated all-time values in All Time mode, otherwise prefer season fields on TeamStanding.
+    private var offenseMgmtPercent: Double {
+        if isAllTime {
+            if let agg = aggregate, let aggOff = agg.avgOffPPW { // avgOffPPW is PPW — but prefer management percent if available
+                // If aggregated offensiveManagementPercent exists, use it; otherwise attempt compute percent via totals
+                if let a = aggregate?.aggregatedManagementPercent { return a } // fallback to overall mgmt
+                return aggOff // this is PPW, not percent; keep it as fallback
+            }
+            return team?.offensiveManagementPercent ?? 0
+        } else {
+            if let t = team {
+                if let offMgmt = t.offensiveManagementPercent { return offMgmt }
+                // Fallback: try compute via offensivePointsFor / maxOffensivePointsFor
+                if let offPF = t.offensivePointsFor, let maxOff = t.maxOffensivePointsFor, maxOff > 0 {
+                    return (offPF / maxOff) * 100
+                }
+            }
+            return 0
+        }
+    }
+    private var defenseMgmtPercent: Double {
+        if isAllTime {
+            if let agg = aggregate, let aggDef = agg.avgDefPPW {
+                if let a = aggregate?.aggregatedManagementPercent { return a } // fallback to overall mgmt
+                return aggDef
+            }
+            return team?.defensiveManagementPercent ?? 0
+        } else {
+            if let t = team {
+                if let defMgmt = t.defensiveManagementPercent { return defMgmt }
+                if let defPF = t.defensivePointsFor, let maxDef = t.maxDefensivePointsFor, maxDef > 0 {
+                    return (defPF / maxDef) * 100
+                }
+            }
+            return 0
+        }
+    }
+    private var balancePercent: Double {
+        abs(offenseMgmtPercent - defenseMgmtPercent)
+    }
+    
+    // UI helpers for the Full Team Efficiency Spotlight
+    private var offenseGradient: LinearGradient {
+        LinearGradient(colors: [Color.red, Color.yellow], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    private var defenseGradient: LinearGradient {
+        LinearGradient(colors: [Color.green, Color.blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    private var offIcon: String { "🔥" }
+    private var defIcon: String { "❄️" }
+    
+    private func generateBalanceTagline(off: Double, def: Double, balance: Double) -> String {
+        if balance < 5 { return "Perfectly synced! Your team is a well-oiled machine." }
+        if off > def + 10 { return "Offense is dominating—beef up that D before playoffs!" }
+        if def > off + 10 { return "Defense wins championships? Yours is carrying—time for offensive firepower." }
+        return "Rough on both sides—roster revamp incoming?"
+    }
+    
     // MARK: - Consistency (StdDev)
     private var stdDev: Double {
         guard weeksPlayed > 1 else { return 0 }
@@ -434,7 +495,8 @@ struct TeamStatExpandedView: View {
                         
                         // 2) PF
                         statBubble(width: bubbleSize, height: bubbleSize) {
-                            Text(String(format: "%.0f", teamPointsFor))
+                            // Changed to show two decimal places
+                            Text(String(format: "%.2f", teamPointsFor))
                                 .font(.system(size: bubbleSize * 0.30, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
@@ -448,7 +510,8 @@ struct TeamStatExpandedView: View {
                         
                         // 3) Mgmt%
                         statBubble(width: bubbleSize, height: bubbleSize) {
-                            Text(String(format: "%.0f%%", managementPercent))
+                            // Changed to show two decimal places for percent
+                            Text(String(format: "%.2f%%", managementPercent))
                                 .font(.system(size: bubbleSize * 0.28, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
@@ -531,6 +594,15 @@ struct TeamStatExpandedView: View {
                                 maxPointsFor: team?.maxPointsFor ?? 0)
             .presentationDetents([.fraction(0.35)])
         }
+        .sheet(isPresented: $showBalanceDetail) {
+            BalanceDetailSheet(
+                offensePct: offenseMgmtPercent,
+                defensePct: defenseMgmtPercent,
+                balancePct: balancePercent,
+                tagline: generateBalanceTagline(off: offenseMgmtPercent, def: defenseMgmtPercent, balance: balancePercent)
+            )
+            .presentationDetents([.fraction(0.40)])
+        }
     }
     
     // MARK: - UI helpers for the stat bubble row
@@ -585,19 +657,104 @@ struct TeamStatExpandedView: View {
             .padding(.top, 4)
     }
     
+    // MARK: - UPDATED: lineupEfficiency -> Full Team Efficiency Spotlight
     private var lineupEfficiency: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Full Team Efficiency Spotlight title row (compact)
             HStack {
-                statBlock(title: "PF", value: teamPointsFor)
-                statBlock(title: "Max", value: teamMaxPointsFor)
-                statBlockPercent(title: "Mgmt%", value: managementPercent)
+                Text("Full Team Efficiency Spotlight")
+                    .font(.subheadline).bold()
+                    .foregroundColor(.yellow)
+                Spacer()
             }
+            
+            // Gauges row (compact single-row height ~56)
+            HStack(spacing: 12) {
+                // Offense Gauge
+                VStack(spacing: 4) {
+                    Gauge(value: offenseMgmtPercent / 100.0) {
+                        // Empty label area (we render custom caption below)
+                        EmptyView()
+                    } currentValueLabel: {
+                        Text(String(format: "%.0f%%", offenseMgmtPercent))
+                            .font(.caption2).bold()
+                            .foregroundColor(.white)
+                    }
+                    .gaugeStyle(.accessoryCircular)
+                    // NOTE: .tint accepts Color on some SDKs; LinearGradient can't be passed directly.
+                    // Use a representative color so this file compiles across SDK versions.
+                    .tint(Color.red)
+                    .frame(width: 52, height: 52)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(offIcon) Offense Efficiency")
+                    .accessibilityValue(String(format: "%.1f percent", offenseMgmtPercent))
+                    
+                    Text("\(offIcon) Offense")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                
+                // Balance center
+                VStack(spacing: 2) {
+                    Text("⚖️ \(String(format: "%.1f%%", balancePercent))")
+                        .font(.subheadline).bold()
+                        .foregroundColor(balancePercent < 5 ? .green : .red)
+                        .accessibilityLabel("Balance Score")
+                        .accessibilityValue(String(format: "%.1f percent imbalance", balancePercent))
+                    Text(generateBalanceTagline(off: offenseMgmtPercent, def: defenseMgmtPercent, balance: balancePercent))
+                        .font(.caption2)
+                        .foregroundColor(.yellow)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 220)
+                }
+                .onTapGesture {
+                    // Show detailed breakdown modal
+                    showBalanceDetail = true
+                }
+                
+                // Defense Gauge
+                VStack(spacing: 4) {
+                    Gauge(value: defenseMgmtPercent / 100.0) {
+                        EmptyView()
+                    } currentValueLabel: {
+                        Text(String(format: "%.0f%%", defenseMgmtPercent))
+                            .font(.caption2).bold()
+                            .foregroundColor(.white)
+                    }
+                    .gaugeStyle(.accessoryCircular)
+                    // Use representative color for tint to remain compatible with SDKs that expect Color
+                    .tint(Color.green)
+                    .frame(width: 52, height: 52)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(defIcon) Defense Efficiency")
+                    .accessibilityValue(String(format: "%.1f percent", defenseMgmtPercent))
+                    
+                    Text("\(defIcon) Defense")
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                
+                Spacer()
+                
+                // Info button (keeps existing EfficiencyInfoSheet as quick reference)
+                Button { showEfficiencyInfo = true } label: {
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.white.opacity(0.75))
+                        .font(.caption)
+                }
+                .accessibilityLabel("More on Lineup Efficiency")
+            }
+            .frame(height: 60)
+            
+            // Existing EfficiencyBar remains (visual progress of overall mgmt%)
             EfficiencyBar(ratio: managementPercent / 100.0, height: 12)
                 .frame(height: 12)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     HStack {
                         Spacer()
+                        // Keep the info button action consistent with above
                         Button { showEfficiencyInfo = true } label: {
                             Image(systemName: "info.circle")
                                 .foregroundColor(.white.opacity(0.75))
@@ -607,6 +764,10 @@ struct TeamStatExpandedView: View {
                     }
                 )
         }
+        .onChange(of: offenseMgmtPercent) { _ in /* animate or react if needed */ }
+        .onChange(of: defenseMgmtPercent) { _ in /* animate or react if needed */ }
+        .animation(.easeInOut, value: offenseMgmtPercent)
+        .animation(.easeInOut, value: defenseMgmtPercent)
     }
     
     private var recentForm: some View {
@@ -654,7 +815,7 @@ struct TeamStatExpandedView: View {
     
     private func statBlockPercent(title: String, value: Double) -> some View {
         VStack(spacing: 4) {
-            Text(String(format: "%.1f%%", value))
+            Text(String(format: "%.2f%%", value))
                 .font(.system(size: 15, weight: .bold))
                 .foregroundColor(.white)
             Text(title)
@@ -737,5 +898,71 @@ struct TeamStatExpandedView: View {
                 .overlay(Capsule().stroke(stroke.opacity(0.7), lineWidth: 1))
                 .foregroundColor(.white)
         }
+    }
+}
+
+// MARK: - Balance Detail Sheet
+private struct BalanceDetailSheet: View {
+    let offensePct: Double
+    let defensePct: Double
+    let balancePct: Double
+    let tagline: String
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Capsule()
+                .fill(Color.white.opacity(0.15))
+                .frame(width: 40, height: 6)
+                .padding(.top, 8)
+            Text("Full Team Efficiency — Breakdown")
+                .font(.headline)
+                .foregroundColor(.yellow)
+            HStack(spacing: 16) {
+                VStack(spacing: 6) {
+                    Text("🔥 Offense")
+                        .font(.subheadline).bold()
+                        .foregroundColor(.white)
+                    ProgressView(value: min(max(offensePct/100.0, 0.0), 1.0))
+                        .progressViewStyle(LinearProgressViewStyle(tint: LinearGradient(colors: [Color.red, Color.yellow], startPoint: .leading, endPoint: .trailing)))
+                        .frame(height: 10)
+                    Text(String(format: "%.2f%% Efficient", offensePct))
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                VStack(spacing: 6) {
+                    Text("❄️ Defense")
+                        .font(.subheadline).bold()
+                        .foregroundColor(.white)
+                    ProgressView(value: min(max(defensePct/100.0, 0.0), 1.0))
+                        .progressViewStyle(LinearProgressViewStyle(tint: LinearGradient(colors: [Color.green, Color.blue], startPoint: .leading, endPoint: .trailing)))
+                        .frame(height: 10)
+                    Text(String(format: "%.2f%% Efficient", defensePct))
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding(.horizontal)
+            
+            HStack {
+                Text("⚖️ Balance")
+                    .font(.subheadline).bold()
+                    .foregroundColor(.white)
+                Spacer()
+                Text(String(format: "%.2f%% Imbalance", balancePct))
+                    .font(.subheadline).bold()
+                    .foregroundColor(balancePct < 5 ? .green : .red)
+            }
+            .padding(.horizontal)
+            
+            Text(tagline)
+                .font(.caption2)
+                .foregroundColor(.yellow)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            Spacer(minLength: 8)
+        }
+        .padding(.bottom, 12)
+        .background(Color.black)
     }
 }
