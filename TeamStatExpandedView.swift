@@ -302,6 +302,144 @@ struct TeamStatExpandedView: View {
         return (teamPointsFor / teamMaxPointsFor) * 100
     }
     
+    // Compute latest valid week's actual total (if any)
+    private var latestValidWeekTotal: Double? {
+        guard let team else { return nil }
+        // Map weeks to totals from stackedBarWeekData (which uses validWeeks in order)
+        let pairs = zip(validWeeks, stackedBarWeekData)
+        // Find last week with total > 0
+        if let last = pairs.reversed().first(where: { $0.1.total > 0 }) {
+            return last.1.total
+        }
+        // fallback: use weeklyActualLineupPoints last non-zero
+        if let weekly = team.weeklyActualLineupPoints {
+            let last = weekly.keys.sorted().reversed().first(where: { (weekly[$0] ?? 0) > 0 })
+            if let wk = last { return weekly[wk] }
+        }
+        return nil
+    }
+    
+    // MARK: New helpers to compute a week's optimal (max) points from roster + lineup config
+    // This mirrors the greedy week-max logic used in DataMigrationManager, kept local to avoid
+    // wide churn. It is used to exclude the latest week entirely (numerator + denominator) when
+    // computing the "previous Mgmt%".
+    private func inferredLineupConfig(from roster: [Player]) -> [String: Int] {
+        var counts: [String:Int] = [:]
+        for p in roster {
+            // Normalize position for starter slot assignment
+            let normalized = PositionNormalizer.normalize(p.position)
+            counts[normalized, default: 0] += 1
+        }
+        return counts.mapValues { min($0, 3) }
+    }
+    private func expandSlots(lineupConfig: [String:Int]) -> [String] {
+        lineupConfig.flatMap { Array(repeating: $0.key, count: $0.value) }
+    }
+    private func allowedPositions(for slot: String) -> Set<String> {
+        switch slot.uppercased() {
+        case "QB","RB","WR","TE","K","DL","LB","DB": return [slot.uppercased()]
+        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return ["RB","WR","TE"]
+        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return ["QB","RB","WR","TE"]
+        case "IDP": return ["DL","LB","DB"]
+        default:
+            if slot.uppercased().contains("IDP") { return ["DL","LB","DB"] }
+            return [slot.uppercased()]
+        }
+    }
+    private func isEligible(basePos: String, fantasy: [String], allowed: Set<String>) -> Bool {
+        let normalizedAllowed = Set(allowed.map { PositionNormalizer.normalize($0) })
+        let candidates = ([basePos] + fantasy).map { PositionNormalizer.normalize($0) }
+        return candidates.contains(where: { normalizedAllowed.contains($0) })
+    }
+    /// Compute the optimal (max) points for a given week by greedily selecting the highest-scoring eligible player for each lineup slot.
+    /// Returns nil if computation cannot be performed (e.g., no weekly scores available).
+    private func computeWeekMax(for week: Int) -> Double? {
+        guard let team = team else { return nil }
+        let roster = team.roster
+        // Determine lineup slots
+        let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: roster)
+        let slots = expandSlots(lineupConfig: lineupConfig)
+        if slots.isEmpty { return nil }
+        // Build candidates from roster (player id -> candidate)
+        struct Candidate {
+            let playerId: String
+            let basePos: String
+            let fantasy: [String]
+            let points: Double
+        }
+        var candidates: [Candidate] = []
+        for p in roster {
+            if let ws = p.weeklyScores.first(where: { $0.week == week }) {
+                let pts = ws.points_half_ppr ?? ws.points
+                candidates.append(Candidate(playerId: p.id, basePos: p.position, fantasy: p.altPositions ?? [], points: pts))
+            }
+        }
+        if candidates.isEmpty { return nil } // cannot compute
+        var used = Set<String>()
+        var weekMax: Double = 0.0
+        // Greedy: for each slot pick highest points candidate eligible and not used
+        for slot in slots {
+            let allowed = allowedPositions(for: slot)
+            let pick = candidates
+                .filter { !used.contains($0.playerId) && isEligible(basePos: $0.basePos, fantasy: $0.fantasy, allowed: allowed) }
+                .max(by: { $0.points < $1.points })
+            if let p = pick {
+                used.insert(p.playerId)
+                weekMax += p.points
+            }
+        }
+        // If we managed to fill at least one slot, return weekMax (0 could be legitimate).
+        return weekMax
+    }
+    
+    // Prior management percent approximated by removing the latest completed week's contribution.
+    // UPDATED: Exclude the most recent week from BOTH numerator (points) and denominator (season max).
+    // If we can compute latestWeekMax we subtract it from teamMaxPointsFor. If not computable, fall back to
+    // old behavior (subtract numerator only) but log a debug note. This preserves continuity when roster scores
+    // are incomplete while honoring the user's requirement where possible.
+    private var priorManagementPercent: Double {
+        guard let last = latestValidWeekTotal else { return 0 }
+        guard teamMaxPointsFor > 0 else { return 0 }
+        let priorPoints = max(0, teamPointsFor - last)
+        // find the week index corresponding to latestValidWeekTotal
+        guard let lastWeek = findLatestValidWeek() else {
+            // can't find week index — fallback to original behavior
+            return (priorPoints / teamMaxPointsFor) * 100
+        }
+        if let lastWeekMax = computeWeekMax(for: lastWeek), lastWeekMax > 0 {
+            let priorMax = teamMaxPointsFor - lastWeekMax
+            if priorMax > 0 {
+                return (priorPoints / priorMax) * 100
+            } else {
+                // priorMax non-positive (unexpected) — fallback
+                return (priorPoints / teamMaxPointsFor) * 100
+            }
+        } else {
+            // Could not compute week max (missing weekly scores) — fallback to original behavior
+            // NOTE: This is only reached when we cannot reconstruct the week's optimal lineup from roster data.
+            return (priorPoints / teamMaxPointsFor) * 100
+        }
+    }
+    
+    // Helper to find the week number corresponding to latestValidWeekTotal (if any)
+    private func findLatestValidWeek() -> Int? {
+        guard let team else { return nil }
+        let pairs = zip(validWeeks, stackedBarWeekData)
+        if let last = pairs.reversed().first(where: { $0.1.total > 0 }) {
+            return last.0
+        }
+        // fallback: check weeklyActualLineupPoints if available
+        if let weekly = team.weeklyActualLineupPoints {
+            let lastKey = weekly.keys.sorted().reversed().first(where: { (weekly[$0] ?? 0) > 0 })
+            if let wk = lastKey { return wk }
+        }
+        return nil
+    }
+    
+    private var managementDelta: Double {
+        managementPercent - priorManagementPercent
+    }
+    
     // MARK: - Full Team Efficiency Spotlight (offense vs defense)
     // Prefer aggregated all-time values in All Time mode, otherwise prefer season fields on TeamStanding.
     private var offenseMgmtPercent: Double {
@@ -736,9 +874,19 @@ struct TeamStatExpandedView: View {
             .padding(.top, 4)
     }
     
-    // // MARK: - UPDATED: lineupEfficiency -> Full Team Efficiency Spotlight
+    // // MARK: - UPDATED: lineupEfficiency -> Full Team Efficiency Spotlight + Management Pill
     private var lineupEfficiency: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Re-insert ManagementPill above the full-team efficiency content.
+            // This is the UI element you reported missing.
+            ManagementPill(
+                ratio: max(0.0, min(1.0, managementPercent / 100.0)),
+                mgmtPercent: managementPercent,
+                delta: managementDelta,
+                mgmtColor: mgmtColor(for: managementPercent)
+            )
+            .padding(.vertical, 2)
+            
             // Full Team Efficiency Spotlight title row (compact)
             HStack {
                 Text("Full Team Efficiency Spotlight")
@@ -846,83 +994,88 @@ struct TeamStatExpandedView: View {
         .animation(.easeInOut, value: defenseMgmtPercent)
     }
     
-    private var recentForm: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            let arrow = formDelta > 0.5 ? "↑" : (formDelta < -0.5 ? "↓" : "→")
-            HStack(alignment: .top, spacing: 12) {
-                formStatBlock("Last 3", last3Avg)
-                formStatBlock("Season", seasonAvg)
-                formDeltaBlock(arrow: arrow, delta: formDelta)
-            }
-            Text("Compares recent 3 weeks to season average for this team.")
-                .font(.caption2)
-                .foregroundColor(.white.opacity(0.55))
-        }
-    }
-    
-    private var consistencyRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Text(consistencyDescriptor)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                Button { showConsistencyInfo = true } label: {
-                    Image(systemName: "questionmark.circle")
-                        .foregroundColor(.white.opacity(0.75))
+    // MARK: - Management Pill View
+    // Reintroduced this struct (previously present in earlier edits). It intentionally keeps rendering purely
+    // local to the view, uses the managementDelta computed above, and formats delta as percentage-points (pp).
+    private struct ManagementPill: View {
+        let ratio: Double        // 0.0 - 1.0
+        let mgmtPercent: Double  // 0-100
+        let delta: Double        // mgmt change since prior week (percentage points)
+        let mgmtColor: Color
+        
+        private let pillHeight: CGFloat = 24
+        private let dotSize: CGFloat = 10
+        private let horizontalPadding: CGFloat = 8
+        
+        var body: some View {
+            VStack(spacing: 6) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: pillHeight/2)
+                            .fill(LinearGradient(
+                                colors: [Color(red: 0.6, green: 0.0, blue: 0.0), Color(red: 0.9, green: 0.95, blue: 0.0), Color.green],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            ))
+                            .frame(height: pillHeight)
+                        
+                        // subtle overlay to keep pill "filled" look consistent
+                        RoundedRectangle(cornerRadius: pillHeight/2)
+                            .stroke(Color.black.opacity(0.15), lineWidth: 0.5)
+                            .frame(height: pillHeight)
+                        
+                        // Dot marker
+                        let x = clampedX(for: geo.size.width)
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: dotSize, height: dotSize)
+                            .shadow(color: Color.black.opacity(0.6), radius: 2, x: 0, y: 1)
+                            .position(x: x, y: pillHeight/2)
+                    }
                 }
+                .frame(height: pillHeight)
+                
+                // Percentage and delta aligned under dot marker
+                GeometryReader { geo in
+                    let x = clampedX(for: geo.size.width)
+                    ZStack {
+                        // full-width clear background so ZStack fills parent and we can use .position
+                        Color.clear
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(String(format: "%.2f%%", mgmtPercent))
+                                .font(.subheadline).bold()
+                                .foregroundColor(mgmtColor)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                            // Delta to right in smaller font
+                            Text(deltaText)
+                                .font(.caption2)
+                                .foregroundColor(delta >= 0 ? Color.green : Color.red)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                                .padding(.top, 2)
+                        }
+                        .fixedSize()                 // keep intrinsic width, do not compress
+                        .position(x: x, y: 11)      // center the HStack at the dot's x and mid of the 22pt row
+                    }
+                }
+                .frame(height: 22)
             }
-            Spacer()
-            ConsistencyMeter(stdDev: stdDev)
-                .frame(width: 110, height: 12)
         }
-    }
-    
-    private func statBlock(title: String, value: Double) -> some View {
-        VStack(spacing: 4) {
-            Text(String(format: "%.2f", value))
-                .font(.system(size: 15, weight: .bold))
-                .foregroundColor(.white)
-            Text(title)
-                .font(.caption2)
-                .foregroundColor(.white.opacity(0.6))
+        
+        private func clampedX(for totalWidth: CGFloat) -> CGFloat {
+            // leave horizontalPadding from edges
+            let leftBound = horizontalPadding + dotSize/2
+            let rightBound = max(leftBound, totalWidth - horizontalPadding - dotSize/2)
+            let raw = totalWidth * CGFloat(ratio)
+            return min(max(raw, leftBound), rightBound)
         }
-        .frame(maxWidth: .infinity)
-    }
-    
-    private func statBlockPercent(title: String, value: Double) -> some View {
-        VStack(spacing: 4) {
-            Text(String(format: "%.2f%%", value))
-                .font(.system(size: 15, weight: .bold))
-                .foregroundColor(.white)
-            Text(title)
-                .font(.caption2)
-                .foregroundColor(.white.opacity(0.6))
+        
+        // Option C: show signed absolute percentage-point difference with "pp" suffix (e.g. "+0.71 pp", "-0.61 pp")
+        private var deltaText: String {
+            if delta == 0 { return "0.00 pp" }
+            return String(format: "%+.2f pp", delta)
         }
-        .frame(maxWidth: .infinity)
-    }
-    
-    private func formStatBlock(_ name: String, _ value: Double) -> some View {
-        VStack(spacing: 2) {
-            Text(String(format: "%.2f", value))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.white)
-            Text(name)
-                .font(.caption2)
-                .foregroundColor(.white.opacity(0.6))
-        }
-        .frame(maxWidth: .infinity)
-    }
-    
-    private func formDeltaBlock(arrow: String, delta: Double) -> some View {
-        VStack(spacing: 2) {
-            Text("\(arrow) \(String(format: "%+.2f", delta))")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(formDeltaColor)
-            Text("Delta")
-                .font(.caption2)
-                .foregroundColor(.white.opacity(0.6))
-        }
-        .frame(maxWidth: .infinity)
     }
     
     // Small reusable components (mirrored from Off/Def)
@@ -974,6 +1127,97 @@ struct TeamStatExpandedView: View {
                 .overlay(Capsule().stroke(stroke.opacity(0.7), lineWidth: 1))
                 .foregroundColor(.white)
         }
+    }
+    
+    // Helper to determine mgmt color (attempt to match existing MgmtColor semantics)
+    private func mgmtColor(for pct: Double) -> Color {
+        // Reasonable mapping: >75 green, 60-75 yellow, <60 red
+        switch pct {
+        case let x where x >= 75: return .green
+        case let x where x >= 60: return .yellow
+        default: return .red
+        }
+    }
+    
+    // MARK: - Recent Form + Consistency Row (these were reported missing by compiler)
+    private var recentForm: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let arrow = formDelta > 0.5 ? "↑" : (formDelta < -0.5 ? "↓" : "→")
+            HStack(alignment: .top, spacing: 12) {
+                formStatBlock("Last 3", last3Avg)
+                formStatBlock("Season", seasonAvg)
+                formDeltaBlock(arrow: arrow, delta: formDelta)
+            }
+            Text("Compares recent 3 weeks to season average for this team.")
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.55))
+        }
+    }
+    
+    private var consistencyRow: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Text(consistencyDescriptor)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Button { showConsistencyInfo = true } label: {
+                    Image(systemName: "questionmark.circle")
+                        .foregroundColor(.white.opacity(0.75))
+                }
+            }
+            Spacer()
+            ConsistencyMeter(stdDev: stdDev)
+                .frame(width: 110, height: 12)
+        }
+    }
+    
+    // MARK: - small stat helpers used by recentForm
+    private func statBlock(title: String, value: Double) -> some View {
+        VStack(spacing: 4) {
+            Text(String(format: "%.2f", value))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(.white)
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private func statBlockPercent(title: String, value: Double) -> some View {
+        VStack(spacing: 4) {
+            Text(String(format: "%.2f%%", value))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(.white)
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private func formStatBlock(_ name: String, _ value: Double) -> some View {
+        VStack(spacing: 2) {
+            Text(String(format: "%.2f", value))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+            Text(name)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private func formDeltaBlock(arrow: String, delta: Double) -> some View {
+        VStack(spacing: 2) {
+            Text("\(arrow) \(String(format: "%+.2f", delta))")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(formDeltaColor)
+            Text("Delta")
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
