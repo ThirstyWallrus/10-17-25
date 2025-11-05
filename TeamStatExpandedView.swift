@@ -707,7 +707,7 @@ struct TeamStatExpandedView: View {
             .padding(.top, 4)
     }
     
-    // MARK: - UPDATED: lineupEfficiency -> Full Team Efficiency Spotlight
+    // // MARK: - UPDATED: lineupEfficiency -> Full Team Efficiency Spotlight
     private var lineupEfficiency: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Full Team Efficiency Spotlight title row (compact)
@@ -726,18 +726,16 @@ struct TeamStatExpandedView: View {
                         // Empty label area (we render custom caption below)
                         EmptyView()
                     } currentValueLabel: {
-                        Text(String(format: "%.0f%%", offenseMgmtPercent))
+                        Text(String(format: "%.2f%%", offenseMgmtPercent))
                             .font(.caption2).bold()
                             .foregroundColor(.white)
                     }
                     .gaugeStyle(.accessoryCircular)
-                    // NOTE: .tint accepts Color on some SDKs; LinearGradient can't be passed directly.
-                    // Use a representative color so this file compiles across SDK versions.
-                    .tint(Color.red)
+                    .tint(Gradient(colors: [Color(red: 0.7, green: 0.0, blue: 0.0), Color(red: 0.0, green: 1.0, blue: 0.0)]))
                     .frame(width: 52, height: 52)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(offIcon) Offense Efficiency")
-                    .accessibilityValue(String(format: "%.1f percent", offenseMgmtPercent))
+                    .accessibilityValue(String(format: "%.2f percent", offenseMgmtPercent))
                     
                     Text("\(offIcon) Offense")
                         .font(.caption2)
@@ -746,11 +744,11 @@ struct TeamStatExpandedView: View {
                 
                 // Balance center
                 VStack(spacing: 2) {
-                    Text("⚖️ \(String(format: "%.1f%%", balancePercent))")
+                    Text("⚖️ \(String(format: "%.2f%%", balancePercent))")
                         .font(.subheadline).bold()
                         .foregroundColor(balancePercent < 5 ? .green : .red)
                         .accessibilityLabel("Balance Score")
-                        .accessibilityValue(String(format: "%.1f percent imbalance", balancePercent))
+                        .accessibilityValue(String(format: "%.2f percent imbalance", balancePercent))
                     Text(generateBalanceTagline(off: offenseMgmtPercent, def: defenseMgmtPercent, balance: balancePercent))
                         .font(.caption2)
                         .foregroundColor(.yellow)
@@ -768,17 +766,16 @@ struct TeamStatExpandedView: View {
                     Gauge(value: defenseMgmtPercent / 100.0) {
                         EmptyView()
                     } currentValueLabel: {
-                        Text(String(format: "%.0f%%", defenseMgmtPercent))
+                        Text(String(format: "%.2f%%", defenseMgmtPercent))
                             .font(.caption2).bold()
                             .foregroundColor(.white)
                     }
                     .gaugeStyle(.accessoryCircular)
-                    // Use representative color for tint to remain compatible with SDKs that expect Color
-                    .tint(Color.green)
+                    .tint(Gradient(colors: [Color(red: 0.7, green: 0.0, blue: 0.0), Color(red: 0.0, green: 1.0, blue: 0.0)]))
                     .frame(width: 52, height: 52)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(defIcon) Defense Efficiency")
-                    .accessibilityValue(String(format: "%.1f percent", defenseMgmtPercent))
+                    .accessibilityValue(String(format: "%.2f percent", defenseMgmtPercent))
                     
                     Text("\(defIcon) Defense")
                         .font(.caption2)
