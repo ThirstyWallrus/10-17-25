@@ -240,15 +240,19 @@ struct DefStatExpandedView: View {
             sectionHeader("Defensive Weekly Trend")
             // Chart: Excludes current week if incomplete, uses normalized positions
             StackedBarWeeklyChart(
-            weekBars: stackedBarWeekData,
-            positionColors: positionColors,
-            showPositions: Set(defPositions),
-            gridIncrement: 25,
-            barSpacing: 4,
-            tooltipFont: .caption2.bold(),
-            showWeekLabels: true
-            )
-            .frame(height: 140)
+                           weekBars: stackedBarWeekData,
+                           positionColors: positionColors,
+                           showPositions: Set(defPositions),
+                           gridIncrement: 25,
+                           barSpacing: 4,
+                           tooltipFont: .caption2.bold(),
+                           showWeekLabels: true,
+                           aggregateToOffDef: false,
+                           showAggregateLegend: false,
+                           showOffensePositionsLegend: false,
+                           showDefensePositionsLegend: true   // show DL/LB/DB
+                       )
+                       .frame(height: 140)
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
             sectionHeader("Recent Form")

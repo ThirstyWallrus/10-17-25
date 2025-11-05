@@ -244,15 +244,20 @@ struct OffStatExpandedView: View {
             header
             sectionHeader("Offensive Weekly Trend")
             StackedBarWeeklyChart(
-            weekBars: stackedBarWeekData,
-            positionColors: positionColors,
-            showPositions: Set(offPositions),
-            gridIncrement: 25,
-            barSpacing: 4,
-            tooltipFont: .caption2.bold(),
-            showWeekLabels: true
-            )
-            .frame(height: 140)
+                            weekBars: stackedBarWeekData,
+                            positionColors: positionColors,
+                            showPositions: Set(offPositions),
+                            gridIncrement: 25,
+                            barSpacing: 4,
+                            tooltipFont: .caption2.bold(),
+                            showWeekLabels: true,
+                            aggregateToOffDef: false,
+                            showAggregateLegend: false,
+                            showOffensePositionsLegend: true,    // show QB/RB/WR/TE/K
+                            showDefensePositionsLegend: false
+                        )
+                        .frame(height: 140)
+
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
             sectionHeader("Recent Form")

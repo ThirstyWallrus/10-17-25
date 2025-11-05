@@ -59,9 +59,18 @@ public struct StackedBarWeeklyChart: View {
     public let tooltipFont: Font // font for tooltip
     public let showWeekLabels: Bool // show week numbers below bars
    
-    // When true, collapse position segments into two blocks per bar: Offense (red) and Defense (blue).
-    // The chart rendering will ignore showPositions and positionColors for visual segments in this mode.
+    // When true, collapse position segments into Offense (red) and Defense (blue).
     public let aggregateToOffDef: Bool
+
+    // New: explicit legend control:
+    // - showAggregateLegend: if true, show the simple Offense / Defense legend (colored dots + labels).
+    // - showOffensePositionsLegend: if true, show the QB/RB/WR/TE/K colored position legend row.
+    // - showDefensePositionsLegend: if true, show the DL/LB/DB colored position legend row.
+    // Callers should set these so that only the intended view shows the intended legend.
+    public let showAggregateLegend: Bool
+    public let showOffensePositionsLegend: Bool
+    public let showDefensePositionsLegend: Bool
+
     @State private var tappedWeek: Int? = nil
 
     // Measured max width of left axis labels (updated at runtime via preference)
@@ -75,7 +84,11 @@ public struct StackedBarWeeklyChart: View {
         barSpacing: CGFloat = 4,
         tooltipFont: Font = .caption2.bold(),
         showWeekLabels: Bool = true,
-        aggregateToOffDef: Bool = false
+        aggregateToOffDef: Bool = false,
+        // legend flags default to false. Callers (Team/Off/Def views) will pass explicit values to control which legends appear where.
+        showAggregateLegend: Bool = false,
+        showOffensePositionsLegend: Bool = false,
+        showDefensePositionsLegend: Bool = false
     ) {
         self.weekBars = weekBars
         self.positionColors = positionColors
@@ -85,6 +98,9 @@ public struct StackedBarWeeklyChart: View {
         self.tooltipFont = tooltipFont
         self.showWeekLabels = showWeekLabels
         self.aggregateToOffDef = aggregateToOffDef
+        self.showAggregateLegend = showAggregateLegend
+        self.showOffensePositionsLegend = showOffensePositionsLegend
+        self.showDefensePositionsLegend = showDefensePositionsLegend
     }
 
     // Helper: return a color for a normalized position using the provided positionColors, falling back to sensible defaults.
@@ -103,6 +119,10 @@ public struct StackedBarWeeklyChart: View {
         default: return .gray
         }
     }
+
+    // Canonical offense / defense position lists used for legends
+    private let offensePositionsLegend: [String] = ["QB","RB","WR","TE","K"]
+    private let defensePositionsLegend: [String] = ["DL","LB","DB"]
 
     public var body: some View {
         VStack(spacing: 16) {
@@ -276,53 +296,105 @@ public struct StackedBarWeeklyChart: View {
             }
             .frame(height: 140)
            
-            // Legend (only when aggregated into Offense/Defense)
-            if aggregateToOffDef {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 16) {
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.red).frame(width: 10, height: 10)
-                            Text("Offense").foregroundColor(.red).font(.caption2).bold()
+            // Legend (flexible):
+            // Controlled explicitly by new legend flags so callers decide what to show.
+            VStack(alignment: .leading, spacing: 8) {
+                if aggregateToOffDef {
+                    // Aggregate header (Offense / Defense) — show only if caller requested it.
+                    if showAggregateLegend {
+                        HStack(spacing: 16) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color.red).frame(width: 10, height: 10)
+                                Text("Offense").foregroundColor(.red).font(.caption2).bold()
+                            }
+                            HStack(spacing: 6) {
+                                Circle().fill(Color.blue).frame(width: 10, height: 10)
+                                Text("Defense").foregroundColor(.blue).font(.caption2).bold()
+                            }
+                            Spacer()
                         }
-                        HStack(spacing: 6) {
-                            Circle().fill(Color.blue).frame(width: 10, height: 10)
-                            Text("Defense").foregroundColor(.blue).font(.caption2).bold()
-                        }
-                        Spacer()
                     }
 
-                    // Offense positions legend row (QB, RB, WR, TE, K)
-                    HStack(spacing: 12) {
-                        ForEach(["QB","RB","WR","TE","K"], id: \.self) { pos in
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(colorForPosition(pos))
-                                    .frame(width: 10, height: 10)
-                                Text(pos)
-                                    .font(.caption2)
-                                    .foregroundColor(.white)
+                    // Offense positions legend row (QB, RB, WR, TE, K) — only if explicitly requested
+                    if showOffensePositionsLegend {
+                        HStack(spacing: 12) {
+                            ForEach(offensePositionsLegend, id: \.self) { pos in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(colorForPosition(pos))
+                                        .frame(width: 10, height: 10)
+                                    Text(pos)
+                                        .font(.caption2)
+                                        .foregroundColor(.white)
+                                }
                             }
+                            Spacer()
                         }
-                        Spacer()
                     }
 
-                    // Defense positions legend row (DL, LB, DB)
-                    HStack(spacing: 12) {
-                        ForEach(["DL","LB","DB"], id: \.self) { pos in
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(colorForPosition(pos))
-                                    .frame(width: 10, height: 10)
-                                Text(pos)
-                                    .font(.caption2)
-                                    .foregroundColor(.white)
+                    // Defense positions legend row (DL, LB, DB) — only if explicitly requested
+                    if showDefensePositionsLegend {
+                        HStack(spacing: 12) {
+                            ForEach(defensePositionsLegend, id: \.self) { pos in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(colorForPosition(pos))
+                                        .frame(width: 10, height: 10)
+                                    Text(pos)
+                                        .font(.caption2)
+                                        .foregroundColor(.white)
+                                }
                             }
+                            Spacer()
                         }
-                        Spacer()
+                    }
+                } else {
+                    // Not aggregated: show legends when requested OR when showPositions indicates their presence.
+                    let normalizedShow = Set(showPositions.map { PositionNormalizer.normalize($0) })
+                    let offenseSet = Set(offensePositionsLegend.map { PositionNormalizer.normalize($0) })
+                    let defenseSet = Set(defensePositionsLegend.map { PositionNormalizer.normalize($0) })
+
+                    // Offense legend row (only positions requested or present)
+                    if showOffensePositionsLegend || !normalizedShow.intersection(offenseSet).isEmpty {
+                        HStack(spacing: 12) {
+                            ForEach(offensePositionsLegend.filter { normalizedShow.contains(PositionNormalizer.normalize($0)) || showOffensePositionsLegend }, id: \.self) { pos in
+                                // Only include items that are requested or actually present in showPositions
+                                if normalizedShow.contains(PositionNormalizer.normalize(pos)) || showOffensePositionsLegend {
+                                    HStack(spacing: 6) {
+                                        Circle()
+                                            .fill(colorForPosition(pos))
+                                            .frame(width: 10, height: 10)
+                                        Text(pos)
+                                            .font(.caption2)
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+
+                    // Defense legend row (only positions requested or present)
+                    if showDefensePositionsLegend || !normalizedShow.intersection(defenseSet).isEmpty {
+                        HStack(spacing: 12) {
+                            ForEach(defensePositionsLegend.filter { normalizedShow.contains(PositionNormalizer.normalize($0)) || showDefensePositionsLegend }, id: \.self) { pos in
+                                if normalizedShow.contains(PositionNormalizer.normalize(pos)) || showDefensePositionsLegend {
+                                    HStack(spacing: 6) {
+                                        Circle()
+                                            .fill(colorForPosition(pos))
+                                            .frame(width: 10, height: 10)
+                                        Text(pos)
+                                            .font(.caption2)
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                            }
+                            Spacer()
+                        }
                     }
                 }
-                .padding(.horizontal, 6)
             }
+            .padding(.horizontal, 6)
         }
         .padding(.vertical, 8)
         .overlay(
@@ -342,7 +414,7 @@ public struct StackedBarWeeklyChart: View {
         let offSet: Set<String> = ["QB","RB","WR","TE","K"]
         let defSet: Set<String> = ["DL","LB","DB"]
         for seg in weekBar.segments {
-            let pos = seg.position.uppercased()
+            let pos = PositionNormalizer.normalize(seg.position)
             if offSet.contains(pos) {
                 off += seg.value
             } else if defSet.contains(pos) {
@@ -421,7 +493,7 @@ private struct TooltipView: View {
         let offSet: Set<String> = ["QB","RB","WR","TE","K"]
         let defSet: Set<String> = ["DL","LB","DB"]
         for seg in weekBar.segments {
-            let pos = seg.position.uppercased()
+            let pos = PositionNormalizer.normalize(seg.position)
             if offSet.contains(pos) {
                 off += seg.value
             } else if defSet.contains(pos) {

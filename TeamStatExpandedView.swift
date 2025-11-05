@@ -601,16 +601,19 @@ struct TeamStatExpandedView: View {
             sectionHeader("Team Weekly Trend")
             // Chart: Excludes current week if incomplete, uses normalized positions
             // UPDATED: aggregateToOffDef = true so each weekly bar shows Offense (red) and Defense (blue) only.
-            StackedBarWeeklyChart(
-                weekBars: stackedBarWeekData,
-                positionColors: positionColors,
-                showPositions: Set(teamPositions),
-                gridIncrement: 50,
-                barSpacing: 4,
-                tooltipFont: .caption2.bold(),
-                showWeekLabels: true,
-                aggregateToOffDef: true
-            )
+                StackedBarWeeklyChart(
+                                weekBars: stackedBarWeekData,
+                                positionColors: positionColors,
+                                showPositions: Set(teamPositions),
+                                gridIncrement: 50,
+                                barSpacing: 4,
+                                tooltipFont: .caption2.bold(),
+                                showWeekLabels: true,
+                                aggregateToOffDef: true,
+                                showAggregateLegend: true,            // show the Offense / Defense header
+                                showOffensePositionsLegend: false,    // do NOT show QB/RB/WR/TE/K rows here
+                                showDefensePositionsLegend: false     // do NOT show DL/LB/DB rows here
+                            )
             .frame(height: 160)
             
             sectionHeader("Lineup Efficiency")
