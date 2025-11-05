@@ -67,6 +67,9 @@ private struct EfficiencyIconComputer {
 
 struct TeamStatExpandedView: View {
     @EnvironmentObject var appSelection: AppSelection
+    // Add league manager so we can access global player caches when roster lacks a player id.
+    @EnvironmentObject var leagueManager: SleeperLeagueManager
+
     // Closure returns (optional) aggregated all time stats wrapper for this team
     let aggregatedAllTime: (TeamStanding) -> DSDDashboard.AggregatedTeamStats?
     
@@ -206,9 +209,17 @@ struct TeamStatExpandedView: View {
                 if let player = team.roster.first(where: { $0.id == pid }) {
                     let norm = PositionNormalizer.normalize(player.position)
                     posSums[norm, default: 0.0] += pts
+                } else if let raw = leagueManager.playerCache?[pid] ?? leagueManager.allPlayers[pid] {
+                    // If player isn't present in the TeamStanding roster, look up their cached RawSleeperPlayer
+                    // (populated by SleeperLeagueManager). Use the cached position when available.
+                    let pos = PositionNormalizer.normalize(raw.position ?? "UNK")
+                    posSums[pos, default: 0.0] += pts
                 } else {
-                    // If player not found on roster (rare), skip to preserve roster-focused charts
-                    continue
+                    // Last-resort fallback: we couldn't resolve position from roster or caches.
+                    // To avoid dropping points (which causes chart totals to differ from official matchup total),
+                    // attribute to a conservative default bucket (WR) so segments still sum to the matchup total.
+                    // TODO: if you prefer a dedicated "Other" bucket, add it to teamPositions and positionColors.
+                    posSums["WR", default: 0.0] += pts
                 }
             }
             // Ensure positions exist in dict (0 default)
