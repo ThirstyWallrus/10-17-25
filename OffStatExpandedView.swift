@@ -5,42 +5,36 @@
 //  Uses authoritative matchup.players_points when available; sums starters only when starters present.
 //  Falls back to deduped roster.weeklyScores when necessary.
 //
-//  Updated to match TeamStatExpandedView patterns for app continuity:
-//   - Uses League/Sleeper caches when available
-//   - Computes grade via TeamGradeComponents + gradeTeams
-//   - Excludes empty/future weeks when computing OPPW (uses non-zero weeks like TeamStatExpandedView)
-//   - Uses ElectrifiedGrade for grade bubble and consistent fallbacks to aggregated all-time stats
+//  Updated: Top title + 4 stat bubbles (Grade, OPF, OMPF, OPPW) to match TeamStatExpandedView style.
 //
 
 import SwiftUI
 
 struct OffStatExpandedView: View {
     @EnvironmentObject var appSelection: AppSelection
-    @EnvironmentObject var leagueManager: SleeperLeagueManager
-
+    
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
-
+    
     // Offensive positions
     private let offPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
-
-    // Position color mapping (normalized tokens)
+    
+    // Position color mapping
     private var positionColors: [String: Color] {
         [
-            PositionNormalizer.normalize("QB"): .red,
-            PositionNormalizer.normalize("RB"): .green,
-            PositionNormalizer.normalize("WR"): .blue,
-            PositionNormalizer.normalize("TE"): .yellow,
-            PositionNormalizer.normalize("K"): Color.purple,
-            // keep defensive colors present for potential lookups
-            PositionNormalizer.normalize("DL"): .orange,
-            PositionNormalizer.normalize("LB"): .purple.opacity(0.7),
-            PositionNormalizer.normalize("DB"): .pink
+            "QB": .red,
+            "RB": .green,
+            "WR": .blue,
+            "TE": .yellow,
+            "K": Color.purple,
+            "DL": .orange,
+            "LB": .purple,
+            "DB": .pink
         ]
     }
-
+    
     // MARK: - Team/League/Season State
-
+    
     private var team: TeamStanding? { appSelection.selectedTeam }
     private var league: LeagueData? { appSelection.selectedLeague }
     private var isAllTime: Bool { appSelection.isAllTimeMode }
@@ -48,8 +42,9 @@ struct OffStatExpandedView: View {
         guard isAllTime, let league, let team else { return nil }
         return league.allTimeOwnerStats?[team.ownerId]
     }
-
+    
     // MARK: - Grade computation (use TeamGradeComponents & gradeTeams for consistency)
+    // Build TeamGradeComponents for teams in current league/season (or use all-time owner aggregates when available).
     private var computedGrade: (grade: String, composite: Double)? {
         guard let lg = league else { return nil }
         let teamsToProcess: [TeamStanding] = {
@@ -65,7 +60,7 @@ struct OffStatExpandedView: View {
                 if isAllTime { return lg.allTimeOwnerStats?[t.ownerId] }
                 return nil
             }()
-
+            
             let pf: Double = {
                 if isAllTime { return aggOwner?.totalPointsFor ?? t.pointsFor }
                 return t.pointsFor
@@ -75,7 +70,7 @@ struct OffStatExpandedView: View {
                 return t.maxPointsFor
             }()
             let mgmt = (mpf > 0) ? (pf / mpf * 100) : (t.managementPercent)
-
+            
             let offMgmt: Double = {
                 if isAllTime {
                     if let agg = aggOwner, agg.totalMaxOffensivePointsFor > 0 {
@@ -86,7 +81,7 @@ struct OffStatExpandedView: View {
                     return t.offensiveManagementPercent ?? 0
                 }
             }()
-
+            
             let defMgmt: Double = {
                 if isAllTime {
                     if let agg = aggOwner, agg.totalMaxDefensivePointsFor > 0 {
@@ -97,7 +92,7 @@ struct OffStatExpandedView: View {
                     return t.defensiveManagementPercent ?? 0
                 }
             }()
-
+            
             let ppwVal: Double = {
                 if isAllTime {
                     return aggOwner?.teamPPW ?? t.teamPointsPerWeek
@@ -107,7 +102,7 @@ struct OffStatExpandedView: View {
                 }
                 return t.teamPointsPerWeek
             }()
-
+            
             let qb = (t.positionAverages?[PositionNormalizer.normalize("QB")] ?? 0)
             let rb = (t.positionAverages?[PositionNormalizer.normalize("RB")] ?? 0)
             let wr = (t.positionAverages?[PositionNormalizer.normalize("WR")] ?? 0)
@@ -116,10 +111,10 @@ struct OffStatExpandedView: View {
             let dl = (t.positionAverages?[PositionNormalizer.normalize("DL")] ?? 0)
             let lb = (t.positionAverages?[PositionNormalizer.normalize("LB")] ?? 0)
             let db = (t.positionAverages?[PositionNormalizer.normalize("DB")] ?? 0)
-
+            
             let (w,l,ties) = TeamGradeComponents.parseRecord(t.winLossRecord)
             let recordPct = (w + l + ties) > 0 ? Double(w) / Double(max(1, w + l + ties)) : 0.0
-
+            
             let comp = TeamGradeComponents(
                 pointsFor: pf,
                 ppw: ppwVal,
@@ -140,16 +135,16 @@ struct OffStatExpandedView: View {
             )
             comps.append(comp)
         }
-
+        
         let graded = gradeTeams(comps)
         if let team = team, let found = graded.first(where: { $0.0 == team.name }) {
             return (found.1, found.2)
         }
         return nil
     }
-
+    
     // MARK: - Weeks to Include (Exclude Current Week if Incomplete)
-
+    
     private var validWeeks: [Int] {
         guard let league, let team else { return [] }
         // For season mode, use the selected season
@@ -171,14 +166,14 @@ struct OffStatExpandedView: View {
         }
         return []
     }
-
+    
     // MARK: - Authoritative week points helper
     private func authoritativePointsForWeek(team: TeamStanding, week: Int) -> [String: Double] {
         // 1) players_points from matchup entry if available (prefer starters only)
         if let league = league {
             let season = (!isAllTime)
-                ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
-                : league.seasons.sorted { $0.id < $1.id }.last
+            ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
+            : league.seasons.sorted { $0.id < $1.id }.last
             if let season {
                 if let entries = season.matchupsByWeek?[week],
                    let rosterIdInt = Int(team.id),
@@ -205,8 +200,8 @@ struct OffStatExpandedView: View {
         var preferredMatchupId: Int? = nil
         if let league = league {
             let season = (!isAllTime)
-                ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
-                : league.seasons.sorted { $0.id < $1.id }.last
+            ? league.seasons.first(where: { $0.id == appSelection.selectedSeason })
+            : league.seasons.sorted { $0.id < $1.id }.last
             if let season, let entries = season.matchupsByWeek?[week], let rosterIdInt = Int(team.id) {
                 preferredMatchupId = entries.first(where: { $0.roster_id == rosterIdInt })?.matchup_id
             }
@@ -224,9 +219,9 @@ struct OffStatExpandedView: View {
         }
         return result
     }
-
+    
     // MARK: - Stacked Bar Chart Data
-
+    
     private var stackedBarWeekData: [StackedBarWeeklyChart.WeekBarData] {
         guard let team else { return [] }
         let sortedWeeks = validWeeks
@@ -234,27 +229,14 @@ struct OffStatExpandedView: View {
             let playerPoints = authoritativePointsForWeek(team: team, week: week)
             var posSums: [String: Double] = [:]
             for (pid, pts) in playerPoints {
-                // Prefer roster lookup; fall back to cached player info, and default to WR to preserve totals if unresolved.
                 if let player = team.roster.first(where: { $0.id == pid }) {
                     let norm = PositionNormalizer.normalize(player.position)
                     if ["QB","RB","WR","TE","K"].contains(norm) {
                         posSums[norm, default: 0.0] += pts
-                    } else {
-                        // non-offensive credited to WR bucket for chart totals (conservative)
-                        posSums["WR", default: 0.0] += pts
                     }
-                } else if let raw = leagueManager.playerCache?[pid] ?? leagueManager.allPlayers[pid] {
-                    let pos = PositionNormalizer.normalize(raw.position ?? "WR")
-                    if ["QB","RB","WR","TE","K"].contains(pos) {
-                        posSums[pos, default: 0.0] += pts
-                    } else {
-                        posSums["WR", default: 0.0] += pts
-                    }
-                } else {
-                    posSums["WR", default: 0.0] += pts
                 }
             }
-            // Build segments using offPositions (QB,RB,WR,TE,K) to keep chart consistent
+            // Build segments with explicit type to avoid ambiguous/failed casts
             let segments: [StackedBarWeeklyChart.WeekBarData.Segment] = offPositions.map { pos in
                 let norm = PositionNormalizer.normalize(pos)
                 return StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: norm, value: posSums[norm] ?? 0)
@@ -262,52 +244,39 @@ struct OffStatExpandedView: View {
             return StackedBarWeeklyChart.WeekBarData(id: week, segments: segments)
         }
     }
-
+    
     // Helper: check if a PlayerWeeklyScore's player matches the target normalized position
     private func matchesNormalizedPosition(_ score: PlayerWeeklyScore, pos: String) -> Bool {
         guard let team = team,
               let player = team.roster.first(where: { $0.id == score.player_id }) else { return false }
         return PositionNormalizer.normalize(player.position) == PositionNormalizer.normalize(pos)
     }
-
+    
     private var sideWeeklyPoints: [Double] {
         stackedBarWeekData.map { $0.total }
     }
-
-    // Use only non-zero weeks (completed weeks) for averages — matches TeamStatExpandedView behavior.
-    private var sideWeeklyPointsNonZero: [Double] {
-        let nonZero = sideWeeklyPoints.filter { $0 > 0.0 }
-        if nonZero.isEmpty, let team = team, let weekly = team.weeklyActualLineupPoints {
-            let vals = weekly.keys.sorted().map { weekly[$0] ?? 0.0 }.filter { $0 > 0.0 }
-            if !vals.isEmpty { return vals }
-        }
-        return nonZero
-    }
-
-    private var weeksPlayed: Int { sideWeeklyPointsNonZero.count }
-
+    
+    private var weeksPlayed: Int { sideWeeklyPoints.count }
     private var last3Avg: Double {
         guard weeksPlayed > 0 else { return 0 }
-        return sideWeeklyPointsNonZero.suffix(3).reduce(0,+)/Double(min(3,weeksPlayed))
+        return sideWeeklyPoints.suffix(3).reduce(0,+)/Double(min(3,weeksPlayed))
     }
-
     private var seasonAvg: Double {
-        if weeksPlayed > 0 {
-            return sideWeeklyPointsNonZero.reduce(0, +) / Double(weeksPlayed)
+        guard weeksPlayed > 0 else {
+            if let agg = aggregate { return agg.offensivePPW }
+            return team?.averageOffensivePPW ?? 0
         }
-        if let agg = aggregate { return agg.offensivePPW }
-        return team?.averageOffensivePPW ?? 0
+        return sideWeeklyPoints.reduce(0,+)/Double(weeksPlayed)
     }
-
     private var formDelta: Double { last3Avg - seasonAvg }
     private var formDeltaColor: Color {
         if formDelta > 2 { return .green }
         if formDelta < -2 { return .red }
         return .yellow
     }
-
+    
     // MARK: - Offensive Points and Management %
-
+    
     private var sidePoints: Double {
         if let agg = aggregate { return agg.totalOffensivePointsFor }
         return team?.offensivePointsFor ?? 0
@@ -320,13 +289,13 @@ struct OffStatExpandedView: View {
         guard sideMaxPoints > 0 else { return 0 }
         return (sidePoints / sideMaxPoints) * 100
     }
-
+    
     // MARK: - Consistency (StdDev)
-
+    
     private var stdDev: Double {
         guard weeksPlayed > 1 else { return 0 }
         let mean = seasonAvg
-        let variance = sideWeeklyPointsNonZero.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeksPlayed)
+        let variance = sideWeeklyPoints.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeksPlayed)
         return sqrt(variance)
     }
     private var consistencyDescriptor: String {
@@ -337,9 +306,9 @@ struct OffStatExpandedView: View {
         default: return "Boom-Bust"
         }
     }
-
+    
     // MARK: - Strengths/Weaknesses
-
+    
     private var strengths: [String] {
         if let agg = aggregate {
             var arr: [String] = []
@@ -370,13 +339,15 @@ struct OffStatExpandedView: View {
         if arr.isEmpty { arr.append("No Major Weakness") }
         return arr
     }
-
+    
     // MARK: - UI: Top Title + 4 stat bubbles (Grade, OPF, OMPF, OPPW)
-
+    
+    /// A generic stat bubble builder: identical to TeamStatExpandedView style for consistency.
     @ViewBuilder
     private func statBubble<Content: View, Caption: View>(width: CGFloat, height: CGFloat, @ViewBuilder content: @escaping () -> Content, @ViewBuilder caption: @escaping () -> Caption) -> some View {
         VStack(spacing: 6) {
             ZStack {
+                // Slight glass/bubble effect background
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.03))
                     .background(
@@ -390,6 +361,7 @@ struct OffStatExpandedView: View {
                     .shadow(color: Color.black.opacity(0.45), radius: 6, x: 0, y: 2)
                     .frame(width: width, height: height)
                     .overlay(
+                        // subtle specular shine
                         RoundedRectangle(cornerRadius: 12)
                             .fill(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.05), Color.white.opacity(0.0)]), startPoint: .top, endPoint: .center))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -400,7 +372,7 @@ struct OffStatExpandedView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             // Title + bubble row (grade, OPF, OMPF, OPPW)
@@ -419,7 +391,7 @@ struct OffStatExpandedView: View {
                     .foregroundColor(.yellow)
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)
-
+                
                 GeometryReader { geo in
                     let horizontalPadding: CGFloat = 8
                     let spacing: CGFloat = 10
@@ -443,7 +415,7 @@ struct OffStatExpandedView: View {
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.8))
                         }
-
+                        
                         // 2) OPF (Offensive Points For)
                         statBubble(width: bubbleSize, height: bubbleSize) {
                             Text(String(format: "%.2f", sidePoints))
@@ -457,7 +429,7 @@ struct OffStatExpandedView: View {
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.8))
                         }
-
+                        
                         // 3) OMPF (Offensive Max Points For)
                         statBubble(width: bubbleSize, height: bubbleSize) {
                             Text(String(format: "%.2f", sideMaxPoints))
@@ -471,7 +443,7 @@ struct OffStatExpandedView: View {
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.8))
                         }
-
+                        
                         // 4) OPPW (Offensive PPW)
                         statBubble(width: bubbleSize, height: bubbleSize) {
                             Text(String(format: "%.2f", seasonAvg))
@@ -491,7 +463,7 @@ struct OffStatExpandedView: View {
                 }
                 .frame(height: 96)
             }
-
+            
             sectionHeader("Offensive Weekly Trend")
             StackedBarWeeklyChart(
                 weekBars: stackedBarWeekData,
@@ -507,7 +479,7 @@ struct OffStatExpandedView: View {
                 showDefensePositionsLegend: false
             )
             .frame(height: 140)
-
+            
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
             sectionHeader("Recent Form")
@@ -537,14 +509,14 @@ struct OffStatExpandedView: View {
             .presentationDetents([.fraction(0.35)])
         }
     }
-
+    
     private func sectionHeader(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 16, weight: .semibold))
             .foregroundColor(.yellow)
             .padding(.top, 4)
     }
-
+    
     private var lineupEfficiency: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -568,7 +540,7 @@ struct OffStatExpandedView: View {
                 )
         }
     }
-
+    
     private var recentForm: some View {
         VStack(alignment: .leading, spacing: 6) {
             let arrow = formDelta > 0.5 ? "↑" : (formDelta < -0.5 ? "↓" : "→")
@@ -582,7 +554,7 @@ struct OffStatExpandedView: View {
                 .foregroundColor(.white.opacity(0.55))
         }
     }
-
+    
     private var consistencyRow: some View {
         HStack {
             HStack(spacing: 8) {
@@ -599,7 +571,7 @@ struct OffStatExpandedView: View {
                 .frame(width: 110, height: 12)
         }
     }
-
+    
     private func statBlock(title: String, value: Double) -> some View {
         VStack(spacing: 4) {
             Text(String(format: "%.2f", value))
@@ -611,7 +583,7 @@ struct OffStatExpandedView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
+    
     private func statBlockPercent(title: String, value: Double) -> some View {
         VStack(spacing: 4) {
             Text(String(format: "%.1f%%", value))
@@ -623,7 +595,7 @@ struct OffStatExpandedView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
+    
     private func formStatBlock(_ name: String, _ value: Double) -> some View {
         VStack(spacing: 2) {
             Text(String(format: "%.2f", value))
@@ -635,7 +607,7 @@ struct OffStatExpandedView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
+    
     private func formDeltaBlock(arrow: String, delta: Double) -> some View {
         VStack(spacing: 2) {
             Text("\(arrow) \(String(format: "%+.2f", delta))")
@@ -647,7 +619,7 @@ struct OffStatExpandedView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
+    
     // Small components (copied/consistent with TeamStatExpandedView)
     private struct EfficiencyBar: View {
         let ratio: Double
@@ -666,7 +638,7 @@ struct OffStatExpandedView: View {
             }
         }
     }
-
+    
     private struct ConsistencyMeter: View {
         let stdDev: Double
         private var norm: Double { max(0, min(1, stdDev / 60.0)) }
