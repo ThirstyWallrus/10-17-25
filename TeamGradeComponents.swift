@@ -144,6 +144,110 @@ func compositePercentileScore(
     return (composite, breakdown)
 }
 
+// --- New: Offense-only composite scoring ---
+// Notes:
+// - This function computes a composite percentile score tailored to offense-only grading.
+// - IMPORTANT: When calling this function (or gradeTeamsOffense), ensure the TeamGradeComponents
+//   instance has pointsFor set to the team's OFFENSIVE Points For and ppw set to offensive PPW
+//   (or otherwise ensure callers construct components with offensive values in those fields).
+func compositePercentileScoreOffense(
+    for team: TeamGradeComponents,
+    allTeams: [TeamGradeComponents]
+) -> (Double, [String: Double]) {
+    func p(_ keyPath: KeyPath<TeamGradeComponents, Double>) -> Double {
+        percentile(for: team[keyPath: keyPath], in: allTeams.map { $0[keyPath: keyPath] }.sorted(by: >))
+    }
+
+    let opfP   = p(\.pointsFor)   // Offensive Points For (caller should have populated this)
+    let oppwP  = p(\.ppw)         // Offensive Points Per Week (caller should have populated this)
+    let offMgmtP = p(\.offMgmt)
+    let qbP    = p(\.qbPPW)
+    let rbP    = p(\.rbPPW)
+    let wrP    = p(\.wrPPW)
+    let teP    = p(\.tePPW)
+    let kP     = p(\.kPPW)
+
+    // Formula provided:
+    // OPF  * 0.25 +
+    // OPPW * 0.25 +
+    // offMgmtP * 0.25 +
+    // qbP * 0.07 +
+    // rbP * 0.06 +
+    // wrP * 0.06 +
+    // teP * 0.04 +
+    // kP * 0.02
+    let composite =
+        opfP     * 0.25 +
+        oppwP    * 0.25 +
+        offMgmtP * 0.25 +
+        qbP      * 0.07 +
+        rbP      * 0.06 +
+        wrP      * 0.06 +
+        teP      * 0.04 +
+        kP       * 0.02
+
+    let breakdown: [String: Double] = [
+        "Off Points For (OPF)": opfP,
+        "Off Points Per Week (OPPW)": oppwP,
+        "Off Mgmt%": offMgmtP,
+        "QB Position Avg": qbP,
+        "RB Position Avg": rbP,
+        "WR Position Avg": wrP,
+        "TE Position Avg": teP,
+        "K Position Avg": kP
+    ]
+
+    return (composite, breakdown)
+}
+
+// --- New: Defense-only composite scoring ---
+// Notes:
+// - This function computes a composite percentile score tailored to defense-only grading.
+// - IMPORTANT: When calling this function (or gradeTeamsDefense), ensure the TeamGradeComponents
+//   instance has pointsFor set to the team's DEFENSIVE Points For and ppw set to defensive PPW
+//   (or otherwise ensure callers construct components with defensive values in those fields).
+func compositePercentileScoreDefense(
+    for team: TeamGradeComponents,
+    allTeams: [TeamGradeComponents]
+) -> (Double, [String: Double]) {
+    func p(_ keyPath: KeyPath<TeamGradeComponents, Double>) -> Double {
+        percentile(for: team[keyPath: keyPath], in: allTeams.map { $0[keyPath: keyPath] }.sorted(by: >))
+    }
+
+    let dpfP   = p(\.pointsFor)   // Defensive Points For (caller should have populated this)
+    let dppwP  = p(\.ppw)         // Defensive Points Per Week (caller should have populated this)
+    let defMgmtP = p(\.defMgmt)
+    let dlP    = p(\.dlPPW)
+    let lbP    = p(\.lbPPW)
+    let dbP    = p(\.dbPPW)
+
+    // Formula provided:
+    // DPF * 0.25 +
+    // DPPW * 0.30 +
+    // defMgmtP * 0.30 +
+    // dlP * 0.05 +
+    // lbP * 0.05 +
+    // dbP * 0.05
+    let composite =
+        dpfP     * 0.25 +
+        dppwP    * 0.30 +
+        defMgmtP * 0.30 +
+        dlP      * 0.05 +
+        lbP      * 0.05 +
+        dbP      * 0.05
+
+    let breakdown: [String: Double] = [
+        "Def Points For (DPF)": dpfP,
+        "Def Points Per Week (DPPW)": dppwP,
+        "Def Mgmt%": defMgmtP,
+        "DL Position Avg": dlP,
+        "LB Position Avg": lbP,
+        "DB Position Avg": dbP
+    ]
+
+    return (composite, breakdown)
+}
+
 func gradeForComposite(_ composite: Double) -> String {
     switch composite {
     case 0.90...1: return "A+"
@@ -160,9 +264,34 @@ func gradeForComposite(_ composite: Double) -> String {
     }
 }
 
+// --- Convenience grading functions ---
+
+/// Grade teams using the original composite (overall) formula (backwards-compatible).
 func gradeTeams(_ teams: [TeamGradeComponents]) -> [(String, String, Double, [String: Double])] {
     teams.map { team in
         let (score, breakdown) = compositePercentileScore(for: team, allTeams: teams)
+        let grade = gradeForComposite(score)
+        return (team.teamName, grade, score, breakdown)
+    }
+}
+
+/// Grade teams using the offense-only composite formula.
+/// IMPORTANT: Each TeamGradeComponents in `teams` should have pointsFor and ppw set to offense-specific values
+/// (i.e., offensivePointsFor and offensivePPW) for correct percentiles.
+func gradeTeamsOffense(_ teams: [TeamGradeComponents]) -> [(String, String, Double, [String: Double])] {
+    teams.map { team in
+        let (score, breakdown) = compositePercentileScoreOffense(for: team, allTeams: teams)
+        let grade = gradeForComposite(score)
+        return (team.teamName, grade, score, breakdown)
+    }
+}
+
+/// Grade teams using the defense-only composite formula.
+/// IMPORTANT: Each TeamGradeComponents in `teams` should have pointsFor and ppw set to defense-specific values
+/// (i.e., defensivePointsFor and defensivePPW) for correct percentiles.
+func gradeTeamsDefense(_ teams: [TeamGradeComponents]) -> [(String, String, Double, [String: Double])] {
+    teams.map { team in
+        let (score, breakdown) = compositePercentileScoreDefense(for: team, allTeams: teams)
         let grade = gradeForComposite(score)
         return (team.teamName, grade, score, breakdown)
     }
