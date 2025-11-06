@@ -21,7 +21,10 @@ struct OffStatExpandedView: View {
     @EnvironmentObject var leagueManager: SleeperLeagueManager
 
     @State private var showConsistencyInfo = false
-    @State private var showEfficiencyInfo = false
+    // Removed showEfficiencyInfo per request (info icon + popup removed)
+
+    // NEW: sheet for offensive per-position balance detail
+    @State private var showOffBalanceDetail = false
 
     // Offensive positions
     private let offPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
@@ -704,6 +707,11 @@ struct OffStatExpandedView: View {
 
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
+
+            // NEW: Offensive Efficiency Spotlight (position-level Mgmt% gauges)
+            sectionHeader("Offensive Efficiency Spotlight")
+            offensiveEfficiencySpotlight
+
             sectionHeader("Recent Form")
             recentForm
             if let team = team, let league = league {
@@ -724,11 +732,13 @@ struct OffStatExpandedView: View {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
                 .presentationDetents([.fraction(0.40)])
         }
-        .sheet(isPresented: $showEfficiencyInfo) {
-            EfficiencyInfoSheet(managementPercent: managementPercent,
-                                pointsFor: sidePoints,
-                                maxPointsFor: sideMaxPoints)
-            .presentationDetents([.fraction(0.35)])
+        .sheet(isPresented: $showOffBalanceDetail) {
+            OffPositionBalanceDetailSheet(
+                positionPercents: positionMgmtPercents,
+                balancePercent: positionBalancePercent,
+                tagline: generatePositionBalanceTagline()
+            )
+            .presentationDetents([.fraction(0.48)])
         }
     }
 
@@ -751,18 +761,140 @@ struct OffStatExpandedView: View {
             )
             .padding(.vertical, 2)
 
-            // Keep small details below if desired (info button)
-            HStack {
-                Spacer()
-                Button { showEfficiencyInfo = true } label: {
-                    Image(systemName: "info.circle")
-                        .foregroundColor(.white.opacity(0.75))
-                        .font(.caption)
-                }
-                .accessibilityLabel("More on Lineup Efficiency")
-            }
+            // Removed info button per request (no popup for Mgmt%).
         }
     }
+
+    // MARK: - Offensive Efficiency Spotlight helpers
+
+    // Returns per-position mgmt% using DSDStatsService (season vs all-time)
+    private var positionMgmtPercents: [String: Double] {
+        guard let team = team else { return [:] }
+        var dict: [String: Double] = [:]
+        for pos in offPositions {
+            let mgmt: Double
+            if isAllTime {
+                if let agg = aggregate {
+                    mgmt = DSDStatsService.shared.managementPercentForPosition(allTimeAgg: agg, position: pos)
+                } else {
+                    // Fallback to TeamStanding field if present
+                    mgmt = team.positionAverages?[PositionNormalizer.normalize(pos)] ?? 0
+                }
+            } else {
+                mgmt = DSDStatsService.shared.managementPercentForPosition(
+                    team: team,
+                    position: pos,
+                    league: league,
+                    selectedSeason: appSelection.selectedSeason,
+                    leagueManager: leagueManager
+                )
+            }
+            dict[pos] = mgmt
+        }
+        return dict
+    }
+
+    // Compute coefficient-of-variation based balance percent for the five offense positions.
+    // balancePercent = (stdDev(mgmtPercents) / mean(mgmtPercents)) * 100
+    // Lower = more balanced. We clamp and handle zero mean gracefully.
+    private var positionBalancePercent: Double {
+        let vals = offPositions.compactMap { positionMgmtPercents[$0] }
+        guard !vals.isEmpty else { return 0 }
+        let mean = vals.reduce(0, +) / Double(vals.count)
+        guard mean > 0 else { return 0 }
+        let variance = vals.reduce(0) { $0 + pow($1 - mean, 2) } / Double(vals.count)
+        let sd = sqrt(variance)
+        return (sd / mean) * 100
+    }
+
+    // Tagline generator for the position balance
+    private func generatePositionBalanceTagline() -> String {
+        let balance = positionBalancePercent
+        if balance < 8 { return "Nicely balanced offense — usage is well distributed." }
+        if balance < 16 { return "Moderate positional skew — a couple spots are carrying the load." }
+        // Determine heavy positions (significantly above mean)
+        let mgmts = positionMgmtPercents
+        let mean = mgmts.values.reduce(0, +) / Double(max(1, mgmts.count))
+        let heavy = mgmts.filter { $0.value > mean + 10 }.map { $0.key }
+        if !heavy.isEmpty {
+            return "Skewed towards: \(heavy.joined(separator: ", ")). Consider diversifying."
+        }
+        return "Unbalanced — offense relies heavily on specific positions."
+    }
+
+    // View: Offensive Efficiency Spotlight (gauges layout: 3 on top row, 2 below with center Balance)
+    private var offensiveEfficiencySpotlight: some View {
+        VStack(spacing: 8) {
+            // Top row: QB, RB, WR
+            HStack(spacing: 12) {
+                ForEach(["QB","RB","WR"], id: \.self) { pos in
+                    positionGauge(position: pos, percent: positionMgmtPercents[pos] ?? 0)
+                }
+                Spacer(minLength: 8)
+                // Info button removed per request (no Mgmt% popup)
+            }
+            .frame(height: 78)
+
+            // Bottom row: TE | Balance | K
+            HStack(spacing: 12) {
+                positionGauge(position: "TE", percent: positionMgmtPercents["TE"] ?? 0)
+
+                // Center balance badge
+                VStack(spacing: 6) {
+                    Text("⚖️ \(String(format: "%.2f%%", positionBalancePercent))")
+                        .font(.subheadline).bold()
+                        .foregroundColor(positionBalancePercent < 8 ? .green : (positionBalancePercent < 16 ? .yellow : .red))
+                        .accessibilityLabel("Offensive balance")
+                        .accessibilityValue(String(format: "%.2f percent balance score", positionBalancePercent))
+                    Text(generatePositionBalanceTagline())
+                        .font(.caption2)
+                        .foregroundColor(.yellow)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .frame(maxWidth: 180)
+                }
+                .onTapGesture {
+                    showOffBalanceDetail = true
+                }
+                .frame(maxWidth: .infinity)
+
+                positionGauge(position: "K", percent: positionMgmtPercents["K"] ?? 0)
+            }
+            .frame(height: 78)
+        }
+        .padding(.vertical, 4)
+    }
+
+    // Single position gauge builder (matches TeamStatExpandedView gauge style exactly)
+    @ViewBuilder
+    private func positionGauge(position: String, percent: Double) -> some View {
+        VStack(spacing: 6) {
+            Gauge(value: max(0.0, min(1.0, percent/100.0))) {
+                EmptyView()
+            } currentValueLabel: {
+                Text(String(format: "%.2f%%", percent))
+                    .font(.caption2).bold()
+                    .foregroundColor(.white)
+            }
+            .gaugeStyle(.accessoryCircular)
+            .tint(Gradient(colors: [Color(red: 0.7, green: 0.0, blue: 0.0), Color(red: 0.0, green: 1.0, blue: 0.0)]))
+            .frame(width: 56, height: 56)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(position) Usage Efficiency")
+            .accessibilityValue(String(format: "%.2f percent", percent))
+
+            // Caption shows position + small color dot
+            HStack(spacing: 6) {
+                Circle().fill(positionColors[position] ?? .white).frame(width: 8, height: 8)
+                Text(position)
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.9))
+            }
+        }
+        .frame(maxWidth: 90)
+    }
+
+    // MARK: - Remaining UI (recentForm, consistencyRow, small helpers)
 
     private var recentForm: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -971,5 +1103,76 @@ struct OffStatExpandedView: View {
         case let x where x >= 60: return .yellow
         default: return .red
         }
+    }
+}
+
+// MARK: - Offense Position Balance Detail Sheet
+private struct OffPositionBalanceDetailSheet: View {
+    let positionPercents: [String: Double]
+    let balancePercent: Double
+    let tagline: String
+
+    // Sort positions so we always show QB, RB, WR, TE, K in that order
+    private var orderedPositions: [String] { ["QB","RB","WR","TE","K"] }
+
+    // For consistent color mapping use same token as OffStatExpandedView
+    private var positionColors: [String: Color] {
+        [
+            "QB": .red,
+            "RB": .green,
+            "WR": .blue,
+            "TE": .yellow,
+            "K": Color.purple
+        ]
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Capsule().fill(Color.white.opacity(0.15)).frame(width: 40, height: 6).padding(.top, 8)
+            Text("Offensive Balance — Position Breakdown")
+                .font(.headline)
+                .foregroundColor(.yellow)
+
+            VStack(spacing: 10) {
+                ForEach(orderedPositions, id: \.self) { pos in
+                    let pct = positionPercents[pos] ?? 0
+                    HStack(spacing: 12) {
+                        Text(pos)
+                            .font(.subheadline).bold()
+                            .frame(width: 48, alignment: .leading)
+                            .foregroundColor(.white)
+                        ProgressView(value: min(max(pct / 100.0, 0.0), 1.0))
+                            .progressViewStyle(LinearProgressViewStyle(tint: positionColors[pos] ?? .white))
+                            .frame(height: 10)
+                        Text(String(format: "%.2f%%", pct))
+                            .font(.caption2).bold()
+                            .foregroundColor(.white.opacity(0.9))
+                            .frame(width: 64, alignment: .trailing)
+                    }
+                }
+            }
+            .padding(.horizontal)
+
+            HStack {
+                Text("⚖️ Balance")
+                    .font(.subheadline).bold()
+                    .foregroundColor(.white)
+                Spacer()
+                Text(String(format: "%.2f%% Variation", balancePercent))
+                    .font(.subheadline).bold()
+                    .foregroundColor(balancePercent < 8 ? .green : (balancePercent < 16 ? .yellow : .red))
+            }
+            .padding(.horizontal)
+
+            Text(tagline)
+                .font(.caption2)
+                .foregroundColor(.yellow)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            Spacer(minLength: 8)
+        }
+        .padding(.bottom, 12)
+        .background(Color.black)
     }
 }
