@@ -6,6 +6,8 @@
 //  Falls back to deduped roster.weeklyScores when necessary.
 //
 //  Updated: Top title + 4 stat bubbles (Grade, OPF, OMPF, OPPW) to match TeamStatExpandedView style.
+//  PATCH: Use offense-only grading routine (gradeTeamsOffense) from TeamGradeComponents and ensure
+//  each TeamGradeComponents instance is populated with offensive points/ppw as required.
 //
 
 import SwiftUI
@@ -45,6 +47,8 @@ struct OffStatExpandedView: View {
     
     // MARK: - Grade computation (use TeamGradeComponents & gradeTeams for consistency)
     // Build TeamGradeComponents for teams in current league/season (or use all-time owner aggregates when available).
+    // PATCH: Use offense-only composite scoring. Each TeamGradeComponents instance will have pointsFor set to
+    // the team's OFFENSIVE Points For and ppw set to offensive PPW to satisfy gradeTeamsOffense requirements.
     private var computedGrade: (grade: String, composite: Double)? {
         guard let lg = league else { return nil }
         let teamsToProcess: [TeamStanding] = {
@@ -55,12 +59,29 @@ struct OffStatExpandedView: View {
         }()
         var comps: [TeamGradeComponents] = []
         for t in teamsToProcess {
-            // For all-time, prefer aggregated owner stats if present
+            // Prefer aggregated owner stats in all-time mode
             let aggOwner: AggregatedOwnerStats? = {
                 if isAllTime { return lg.allTimeOwnerStats?[t.ownerId] }
                 return nil
             }()
             
+            // Offensive-specific values to populate TeamGradeComponents correctly for offense-only grading
+            let offPF: Double = {
+                if isAllTime {
+                    return aggOwner?.totalOffensivePointsFor ?? (t.offensivePointsFor ?? 0)
+                }
+                return t.offensivePointsFor ?? 0
+            }()
+            
+            let offPPW: Double = {
+                if isAllTime {
+                    return aggOwner?.offensivePPW ?? (t.averageOffensivePPW ?? 0)
+                }
+                // Use stored averageOffensivePPW when available; fallback to teamPointsPerWeek if missing
+                return t.averageOffensivePPW ?? t.teamPointsPerWeek
+            }()
+            
+            // Overall mgmt — keep existing behavior (season/all-time fallback)
             let pf: Double = {
                 if isAllTime { return aggOwner?.totalPointsFor ?? t.pointsFor }
                 return t.pointsFor
@@ -71,6 +92,7 @@ struct OffStatExpandedView: View {
             }()
             let mgmt = (mpf > 0) ? (pf / mpf * 100) : (t.managementPercent)
             
+            // Off/Def mgmt (keep previous logic)
             let offMgmt: Double = {
                 if isAllTime {
                     if let agg = aggOwner, agg.totalMaxOffensivePointsFor > 0 {
@@ -93,16 +115,7 @@ struct OffStatExpandedView: View {
                 }
             }()
             
-            let ppwVal: Double = {
-                if isAllTime {
-                    return aggOwner?.teamPPW ?? t.teamPointsPerWeek
-                }
-                if let lg2 = lg as LeagueData? {
-                    return (DSDStatsService.shared.stat(for: t, type: .teamAveragePPW, league: lg2, selectedSeason: appSelection.selectedSeason) as? Double) ?? t.teamPointsPerWeek
-                }
-                return t.teamPointsPerWeek
-            }()
-            
+            // Position averages (fallback to 0)
             let qb = (t.positionAverages?[PositionNormalizer.normalize("QB")] ?? 0)
             let rb = (t.positionAverages?[PositionNormalizer.normalize("RB")] ?? 0)
             let wr = (t.positionAverages?[PositionNormalizer.normalize("WR")] ?? 0)
@@ -115,9 +128,10 @@ struct OffStatExpandedView: View {
             let (w,l,ties) = TeamGradeComponents.parseRecord(t.winLossRecord)
             let recordPct = (w + l + ties) > 0 ? Double(w) / Double(max(1, w + l + ties)) : 0.0
             
+            // IMPORTANT: For offense grading, set pointsFor = offensive points for and ppw = offensivePPW
             let comp = TeamGradeComponents(
-                pointsFor: pf,
-                ppw: ppwVal,
+                pointsFor: offPF,
+                ppw: offPPW,
                 mgmt: mgmt,
                 offMgmt: offMgmt,
                 defMgmt: defMgmt,
@@ -136,7 +150,8 @@ struct OffStatExpandedView: View {
             comps.append(comp)
         }
         
-        let graded = gradeTeams(comps)
+        // Use offense-specific grading helper
+        let graded = gradeTeamsOffense(comps)
         if let team = team, let found = graded.first(where: { $0.0 == team.name }) {
             return (found.1, found.2)
         }
