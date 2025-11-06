@@ -16,7 +16,7 @@
 //  non-empty weeks.
 //
 //  NOTE: Restored PPW responsive font behavior — the PPW value will shrink to fit
-//  inside the bubble if the number is wide. This uses minimumScaleFactor + lineLimit(1).
+//  inside the bubble if the PPW value is wide. This uses minimumScaleFactor + lineLimit(1).
 //
 
 import SwiftUI
@@ -658,16 +658,19 @@ struct TeamStatExpandedView: View {
             // Top: keep everything contained inside the card (Title centered + stat bubble row).
             // Use GeometryReader locally to size bubbles to available width so they never overflow.
             VStack(spacing: 8) {
-                // NEW: Use the appSelection.currentUsername as primary viewer name when available.
-                // Falls back to aggregated owner display name or team name when currentUsername is nil.
+                // IMPORTANT CHANGE:
+                // Prefer showing the team being viewed in the title. Previously we prioritized
+                // displaying the uploader username which led to confusion when viewing other teams.
+                // Now the title uses the selected team's display name (aggregated when All Time)
+                // and falls back to the uploader username or userTeam when no team is selected.
                 let viewerName: String = {
-                    if let uname = appSelection.currentUsername, !uname.isEmpty { return uname }
                     if let team = team {
                         if isAllTime {
                             return aggregatedAllTime(team)?.teamName ?? team.name
                         }
                         return team.name
                     }
+                    if let uname = appSelection.currentUsername, !uname.isEmpty { return uname }
                     return appSelection.userTeam.isEmpty ? "Team" : appSelection.userTeam
                 }()
                 
