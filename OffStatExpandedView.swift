@@ -231,14 +231,7 @@ struct OffStatExpandedView: View {
                                 reconstructed[player.id] = best.points_half_ppr ?? best.points
                             }
                         }
-#if DEBUG
-                        // Debug: compare totals so developer can inspect weeks where players_points > reconstructed
-                        let playersPointsTotal = playersPoints.values.reduce(0.0, +)
-                        let reconstructedTotal = reconstructed.values.reduce(0.0, +)
-                        if playersPointsTotal != reconstructedTotal {
-                            print("[DEBUG][OffStatExpandedView] week \(week) players_points total = \(playersPointsTotal), reconstructed roster total = \(reconstructedTotal) (team: \(team.name))")
-                        }
-#endif
+
                         if !reconstructed.isEmpty {
                             return reconstructed
                         } else {
