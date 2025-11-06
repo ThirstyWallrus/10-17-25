@@ -414,7 +414,7 @@ struct OffStatExpandedView: View {
 
     // seasonAvg is computed as average of the authoritative weekly totals (non-zero completed weeks)
     private var seasonAvg: Double {
-        // FIX: Prefer authoritative stored average when present to match other views and persisted data.
+        // FIX: Prefer authoritative stored average when present to match other views and persisted values.
         // Many parts of the app and persisted imports use TeamStanding.averageOffensivePPW as the canonical value.
         // Use stored value first (keeps continuity), then all-time aggregate, then computed weekly average as fallback.
         if let t = team, let stored = t.averageOffensivePPW, stored > 0 {
@@ -815,9 +815,18 @@ struct OffStatExpandedView: View {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
                 .presentationDetents([PresentationDetent.fraction(0.40)])
         }
+        // Ensure the OffPositionBalanceDetailSheet is provided with a complete mapping (QB,RB,WR,TE,K)
         .sheet(isPresented: $showOffBalanceDetail) {
+            // Normalize and ensure all expected positions exist (defensive keys ignored here)
+            let sanitized: [String: Double] = {
+                var map = positionMgmtPercents
+                for key in offPositions {
+                    if map[key] == nil { map[key] = 0.0 }
+                }
+                return map
+            }()
             OffPositionBalanceDetailSheet(
-                positionPercents: positionMgmtPercents,
+                positionPercents: sanitized,
                 balancePercent: positionBalancePercent,
                 tagline: generatePositionBalanceTagline()
             )
@@ -937,7 +946,7 @@ struct OffStatExpandedView: View {
                         .frame(maxWidth: 180)
                 }
                 .onTapGesture {
-                    showOffBalanceDetail = true
+                    withAnimation { showOffBalanceDetail = true }
                 }
                 .frame(maxWidth: .infinity)
 
@@ -1188,4 +1197,3 @@ struct OffStatExpandedView: View {
         }
     }
 }
-

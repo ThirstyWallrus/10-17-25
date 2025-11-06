@@ -1,9 +1,7 @@
+// OffPositionBalanceDetailSheet.swift
+// DynastyStatDrop
 //
-//  OffPositionBalanceDetailSheet.swift
-//  DynastyStatDrop
-//
-//  Created by Dynasty Stat Drop on 11/6/25.
-//
+// Created by Dynasty Stat Drop on 11/6/25.
 
 import SwiftUI
 
@@ -67,66 +65,98 @@ struct CircularProgressView: View {
         Color(hue: 0.333 - 0.333 * (1 - progress), saturation: 1, brightness: 1)
     }
 
+    private var effectOverlay: some View {
+        if progress >= 0.8 {
+            AnyView(FlameEffect())
+        } else if progress >= 0.6 {
+            AnyView(GlowEffect(color: .green))
+        } else {
+            AnyView(IceEffect())
+        }
+    }
+
+    private var backgroundCircle: some View {
+        Circle()
+            .stroke(Color.white.opacity(0.2), lineWidth: lineWidth)
+    }
+
+    private var progressArc: some View {
+        Circle()
+            .trim(from: 0, to: progress)
+            .stroke(arcColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+    }
+
+    private var progressDot: some View {
+        Circle()
+            .fill(Color.white)
+            .frame(width: 8, height: 8)
+            .offset(y: -30)
+            .rotationEffect(.degrees(360 * progress - 90))
+    }
+
+    private var progressText: some View {
+        Text(String(format: "%.2f%%", progress * 100))
+            .font(.caption)
+            .bold()
+            .foregroundColor(.white)
+    }
+
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(Color.white.opacity(0.2), lineWidth: lineWidth)
-
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(arcColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-
-            Circle()
-                .fill(Color.white)
-                .frame(width: 8, height: 8)
-                .offset(y: -30)
-                .rotationEffect(.degrees(360 * progress - 90))
-
-            Text(String(format: "%.2f%%", progress * 100))
-                .font(.caption)
-                .bold()
-                .foregroundColor(.white)
+            backgroundCircle
+            progressArc
+            progressDot
+            progressText
         }
         .frame(width: 60, height: 60)
         .overlay {
-            if progress >= 0.8 {
-                FlameEffect()
-            } else if progress >= 0.6 {
-                GlowEffect(color: .green)
-            } else {
-                IceEffect()
-            }
+            effectOverlay
         }
     }
 }
 
+struct FlameBurst: View {
+    let rotation: Angle
+    
+    var body: some View {
+        FlameShape()
+            .fill(LinearGradient(gradient: Gradient(colors: [.yellow, .orange, .red]), startPoint: .bottom, endPoint: .top))
+            .frame(width: 10, height: 20)
+            .offset(y: -35)
+            .rotationEffect(rotation)
+            .blur(radius: 1)
+    }
+}
+
 struct FlameEffect: View {
+    private var outerFlameRing: some View {
+        Circle()
+            .stroke(
+                AngularGradient(
+                    gradient: Gradient(colors: [.red, .orange, .yellow, .orange, .red]),
+                    center: .center,
+                    startAngle: .degrees(0),
+                    endAngle: .degrees(360)
+                ),
+                style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [2, 4])
+            )
+            .blur(radius: 2)
+            .frame(width: 70, height: 70)
+    }
+
+    private var innerFlameBursts: some View {
+        ZStack {
+            ForEach(0..<6) { i in
+                FlameBurst(rotation: .degrees(Double(i) * 60 - 90))
+            }
+        }
+    }
+
     var body: some View {
         ZStack {
-            // Outer flame ring with gradient
-            Circle()
-                .stroke(
-                    AngularGradient(
-                        gradient: Gradient(colors: [.red, .orange, .yellow, .orange, .red]),
-                        center: .center,
-                        startAngle: .degrees(0),
-                        endAngle: .degrees(360)
-                    ),
-                    style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [2, 4])
-                )
-                .blur(radius: 2)
-                .frame(width: 70, height: 70)
-            
-            // Inner flame bursts at top
-            ForEach(0..<6) { i in
-                FlameShape()
-                    .fill(LinearGradient(gradient: Gradient(colors: [.yellow, .orange, .red]), startPoint: .bottom, endPoint: .top))
-                    .frame(width: 10, height: 20)
-                    .offset(y: -35)
-                    .rotationEffect(.degrees(Double(i) * 60 - 90)) // Spread around top half
-                    .blur(radius: 1)
-            }
+            outerFlameRing
+            innerFlameBursts
         }
     }
 }
@@ -143,44 +173,67 @@ struct FlameShape: Shape {
 
 struct GlowEffect: View {
     let color: Color
-    
-    var body: some View {
+
+    private var glowStroke: some View {
         Circle()
             .stroke(color, lineWidth: 2)
             .blur(radius: 4)
             .frame(width: 70, height: 70)
-            .overlay(
-                Circle()
-                    .fill(color.opacity(0.2))
-                    .blur(radius: 6)
-                    .frame(width: 68, height: 68)
-            )
+    }
+
+    private var glowFill: some View {
+        Circle()
+            .fill(color.opacity(0.2))
+            .blur(radius: 6)
+            .frame(width: 68, height: 68)
+    }
+
+    var body: some View {
+        glowStroke
+            .overlay(glowFill)
+    }
+}
+
+struct IcicleBurst: View {
+    let i: Int
+    
+    var body: some View {
+        IcicleShape()
+            .fill(LinearGradient(gradient: Gradient(colors: [.white, .cyan, .blue]), startPoint: .top, endPoint: .bottom))
+            .frame(width: 8, height: 15 + CGFloat(i * 2))
+            .offset(x: CGFloat(Double(i * 15) - 22.5), y: 30)
+            .blur(radius: 0.5)
     }
 }
 
 struct IceEffect: View {
+    private var frostyOverlay: some View {
+        Circle()
+            .fill(Color.blue.opacity(0.1))
+            .blur(radius: 3)
+            .frame(width: 60, height: 60)
+    }
+
+    private var outerIceBorder: some View {
+        Circle()
+            .stroke(Color.cyan.opacity(0.5), lineWidth: 3)
+            .blur(radius: 2)
+            .frame(width: 70, height: 70)
+    }
+
+    private var icicles: some View {
+        ZStack {
+            ForEach(0..<4) { i in
+                IcicleBurst(i: i)
+            }
+        }
+    }
+
     var body: some View {
         ZStack {
-            // Frosty overlay
-            Circle()
-                .fill(Color.blue.opacity(0.1))
-                .blur(radius: 3)
-                .frame(width: 60, height: 60)
-            
-            // Outer ice border
-            Circle()
-                .stroke(Color.cyan.opacity(0.5), lineWidth: 3)
-                .blur(radius: 2)
-                .frame(width: 70, height: 70)
-            
-            // Icicles hanging from bottom
-            ForEach(0..<4) { i in
-                IcicleShape()
-                    .fill(LinearGradient(gradient: Gradient(colors: [.white, .cyan, .blue]), startPoint: .top, endPoint: .bottom))
-                    .frame(width: 8, height: 15 + CGFloat(i * 2))
-                    .offset(x: CGFloat(i * 15 - 22.5), y: 30)
-                    .blur(radius: 0.5)
-            }
+            frostyOverlay
+            outerIceBorder
+            icicles
         }
     }
 }
