@@ -74,95 +74,7 @@ struct OffStatExpandedView: View {
         }()
         var comps: [TeamGradeComponents] = []
         for t in teamsToProcess {
-            // Prefer aggregated owner stats in all-time mode
-            let aggOwner: AggregatedOwnerStats? = {
-                if isAllTime { return lg.allTimeOwnerStats?[t.ownerId] }
-                return nil
-            }()
-
-            // Offensive-specific values to populate TeamGradeComponents correctly for offense-only grading
-            let offPF: Double = {
-                if isAllTime {
-                    return aggOwner?.totalOffensivePointsFor ?? (t.offensivePointsFor ?? 0)
-                }
-                return t.offensivePointsFor ?? 0
-            }()
-
-            let offPPW: Double = {
-                if isAllTime {
-                    return aggOwner?.offensivePPW ?? (t.averageOffensivePPW ?? 0)
-                }
-                // Use stored averageOffensivePPW when available; fallback to teamPointsPerWeek if missing
-                return t.averageOffensivePPW ?? t.teamPointsPerWeek
-            }()
-
-            // Overall mgmt — keep existing behavior (season/all-time fallback)
-            let pf: Double = {
-                if isAllTime { return aggOwner?.totalPointsFor ?? t.pointsFor }
-                return t.pointsFor
-            }()
-            let mpf: Double = {
-                if isAllTime { return aggOwner?.totalMaxPointsFor ?? t.maxPointsFor }
-                return t.maxPointsFor
-            }()
-            let mgmt = (mpf > 0) ? (pf / mpf * 100) : (t.managementPercent)
-
-            // Off/Def mgmt (keep previous logic)
-            let offMgmt: Double = {
-                if isAllTime {
-                    if let agg = aggOwner, agg.totalMaxOffensivePointsFor > 0 {
-                        return (agg.totalOffensivePointsFor / agg.totalMaxOffensivePointsFor) * 100
-                    }
-                    return t.offensiveManagementPercent ?? 0
-                } else {
-                    return t.offensiveManagementPercent ?? 0
-                }
-            }()
-
-            let defMgmt: Double = {
-                if isAllTime {
-                    if let agg = aggOwner, agg.totalMaxDefensivePointsFor > 0 {
-                        return (agg.totalDefensivePointsFor / agg.totalMaxDefensivePointsFor) * 100
-                    }
-                    return t.defensiveManagementPercent ?? 0
-                } else {
-                    return t.defensiveManagementPercent ?? 0
-                }
-            }()
-
-            // Position averages (fallback to 0)
-            let qb = (t.positionAverages?[PositionNormalizer.normalize("QB")] ?? 0)
-            let rb = (t.positionAverages?[PositionNormalizer.normalize("RB")] ?? 0)
-            let wr = (t.positionAverages?[PositionNormalizer.normalize("WR")] ?? 0)
-            let te = (t.positionAverages?[PositionNormalizer.normalize("TE")] ?? 0)
-            let k  = (t.positionAverages?[PositionNormalizer.normalize("K")]  ?? 0)
-            let dl = (t.positionAverages?[PositionNormalizer.normalize("DL")] ?? 0)
-            let lb = (t.positionAverages?[PositionNormalizer.normalize("LB")] ?? 0)
-            let db = (t.positionAverages?[PositionNormalizer.normalize("DB")] ?? 0)
-
-            let (w,l,ties) = TeamGradeComponents.parseRecord(t.winLossRecord)
-            let recordPct = (w + l + ties) > 0 ? Double(w) / Double(max(1, w + l + ties)) : 0.0
-
-            // IMPORTANT: For offense grading, set pointsFor = offensive points for and ppw = offensivePPW
-            let comp = TeamGradeComponents(
-                pointsFor: offPF,
-                ppw: offPPW,
-                mgmt: mgmt,
-                offMgmt: offMgmt,
-                defMgmt: defMgmt,
-                recordPct: recordPct,
-                qbPPW: qb,
-                rbPPW: rb,
-                wrPPW: wr,
-                tePPW: te,
-                kPPW: k,
-                dlPPW: dl,
-                lbPPW: lb,
-                dbPPW: db,
-                teamName: t.name,
-                teamId: t.id
-            )
-            comps.append(comp)
+            comps.append(createTeamGradeComponent(for: t))
         }
 
         // Use offense-specific grading helper
@@ -171,6 +83,97 @@ struct OffStatExpandedView: View {
             return (found.1, found.2)
         }
         return nil
+    }
+
+    private func createTeamGradeComponent(for t: TeamStanding) -> TeamGradeComponents {
+        // Prefer aggregated owner stats in all-time mode
+        let aggOwner: AggregatedOwnerStats? = {
+            if isAllTime { return league?.allTimeOwnerStats?[t.ownerId] }
+            return nil
+        }()
+
+        // Offensive-specific values to populate TeamGradeComponents correctly for offense-only grading
+        let offPF: Double = {
+            if isAllTime {
+                return aggOwner?.totalOffensivePointsFor ?? (t.offensivePointsFor ?? 0)
+            }
+            return t.offensivePointsFor ?? 0
+        }()
+
+        let offPPW: Double = {
+            if isAllTime {
+                return aggOwner?.offensivePPW ?? (t.averageOffensivePPW ?? 0)
+            }
+            // Use stored averageOffensivePPW when available; fallback to teamPointsPerWeek if missing
+            return t.averageOffensivePPW ?? t.teamPointsPerWeek
+        }()
+
+        // Overall mgmt — keep existing behavior (season/all-time fallback)
+        let pf: Double = {
+            if isAllTime { return aggOwner?.totalPointsFor ?? t.pointsFor }
+            return t.pointsFor
+        }()
+        let mpf: Double = {
+            if isAllTime { return aggOwner?.totalMaxPointsFor ?? t.maxPointsFor }
+            return t.maxPointsFor
+        }()
+        let mgmt = (mpf > 0) ? (pf / mpf * 100) : (t.managementPercent)
+
+        // Off/Def mgmt (keep previous logic)
+        let offMgmt: Double = {
+            if isAllTime {
+                if let agg = aggOwner, agg.totalMaxOffensivePointsFor > 0 {
+                    return (agg.totalOffensivePointsFor / agg.totalMaxOffensivePointsFor) * 100
+                }
+                return t.offensiveManagementPercent ?? 0
+            } else {
+                return t.offensiveManagementPercent ?? 0
+            }
+        }()
+
+        let defMgmt: Double = {
+            if isAllTime {
+                if let agg = aggOwner, agg.totalMaxDefensivePointsFor > 0 {
+                    return (agg.totalDefensivePointsFor / agg.totalMaxDefensivePointsFor) * 100
+                }
+                return t.defensiveManagementPercent ?? 0
+            } else {
+                return t.defensiveManagementPercent ?? 0
+            }
+        }()
+
+        // Position averages (fallback to 0)
+        let qb = (t.positionAverages?[PositionNormalizer.normalize("QB")] ?? 0)
+        let rb = (t.positionAverages?[PositionNormalizer.normalize("RB")] ?? 0)
+        let wr = (t.positionAverages?[PositionNormalizer.normalize("WR")] ?? 0)
+        let te = (t.positionAverages?[PositionNormalizer.normalize("TE")] ?? 0)
+        let k  = (t.positionAverages?[PositionNormalizer.normalize("K")]  ?? 0)
+        let dl = (t.positionAverages?[PositionNormalizer.normalize("DL")] ?? 0)
+        let lb = (t.positionAverages?[PositionNormalizer.normalize("LB")] ?? 0)
+        let db = (t.positionAverages?[PositionNormalizer.normalize("DB")] ?? 0)
+
+        let (w,l,ties) = TeamGradeComponents.parseRecord(t.winLossRecord)
+        let recordPct = (w + l + ties) > 0 ? Double(w) / Double(max(1, w + l + ties)) : 0.0
+
+        // IMPORTANT: For offense grading, set pointsFor = offensive points for and ppw = offensivePPW
+        return TeamGradeComponents(
+            pointsFor: offPF,
+            ppw: offPPW,
+            mgmt: mgmt,
+            offMgmt: offMgmt,
+            defMgmt: defMgmt,
+            recordPct: recordPct,
+            qbPPW: qb,
+            rbPPW: rb,
+            wrPPW: wr,
+            tePPW: te,
+            kPPW: k,
+            dlPPW: dl,
+            lbPPW: lb,
+            dbPPW: db,
+            teamName: t.name,
+            teamId: t.id
+        )
     }
 
     // MARK: - Weeks to Include (Exclude Current Week if Incomplete)
@@ -210,99 +213,107 @@ struct OffStatExpandedView: View {
                    let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
                    let playersPoints = myEntry.players_points, !playersPoints.isEmpty {
                     if let starters = myEntry.starters, !starters.isEmpty {
-                        var map: [String: Double] = [:]
-                        for pid in starters {
-                            if let pts = playersPoints[pid] {
-                                map[pid] = pts
-                            } else {
-                                map[pid] = 0.0
-                            }
-                        }
-                        return map
+                        return reconstructFromStarters(starters: starters, playersPoints: playersPoints)
                     } else {
-                        // IMPORTANT PATCH:
-                        // When players_points exists but starters list is missing, do NOT blindly return all players_points
-                        // (bench + starters). That overcounts OPF. Instead:
-                        //  1) Attempt to reconstruct starters greedily using players_points with position resolution
-                        //     (this handles started-then-dropped players since players_points contains the actual starters' ids).
-                        //  2) If greedy reconstruction from players_points fails (e.g., cannot resolve eligible picks),
-                        //     fall back to reconstructing from roster.weeklyScores (legacy).
-                        //  3) Only if both reconstructions fail, return the raw playersPoints as last resort.
-                        //
-                        // Greedy reconstruction from players_points:
-                        struct Candidate {
-                            let playerId: String
-                            let basePos: String
-                            let fantasy: [String]
-                            let points: Double
-                        }
-
-                        var candidates: [Candidate] = []
-                        for (pid, pts) in playersPoints {
-                            var basePos = "UNK"
-                            var alt: [String] = []
-                            if let p = team.roster.first(where: { $0.id == pid }) {
-                                basePos = p.position
-                                alt = p.altPositions ?? []
-                            } else if let raw = leagueManager.playerCache?[pid] ?? leagueManager.allPlayers[pid] {
-                                // raw likely has `position` optional
-                                basePos = raw.position ?? "WR"
-                                // no altPositions in raw cache typically
-                            } else {
-                                // Unknown player — assume WR fallback to avoid dropping offensive points entirely
-                                basePos = "WR"
-                            }
-                            candidates.append(Candidate(playerId: pid, basePos: basePos, fantasy: alt, points: pts))
-                        }
-
-                        // Determine lineup slots for greedy assignment (infer if missing)
-                        let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
-                        let slots = expandSlots(lineupConfig: lineupConfig)
-                        var usedIds = Set<String>()
-                        var selected: [String: Double] = [:]
-
-                        if !slots.isEmpty && !candidates.isEmpty {
-                            // Greedy selection: for each slot pick highest-scoring eligible candidate not already used
-                            for slot in slots {
-                                let allowed = allowedPositions(for: slot)
-                                let pick = candidates
-                                    .filter { !usedIds.contains($0.playerId) && isEligible(basePos: $0.basePos, fantasy: $0.fantasy, allowed: allowed) }
-                                    .max(by: { $0.points < $1.points })
-                                if let p = pick {
-                                    usedIds.insert(p.playerId)
-                                    selected[p.playerId] = p.points
-                                }
-                            }
-                        }
-
-                        if !selected.isEmpty {
-                            return selected
-                        }
-
-                        // Fallback reconstruction using roster.weeklyScores (legacy behavior) — prefer matchup_id when available
-                        var reconstructedFromRoster: [String: Double] = [:]
-                        let preferredMid = myEntry.matchup_id
-                        for player in team.roster {
-                            let scores = player.weeklyScores.filter { $0.week == week }
-                            if scores.isEmpty { continue }
-                            if let matched = scores.first(where: { $0.matchup_id == preferredMid }) {
-                                reconstructedFromRoster[player.id] = matched.points_half_ppr ?? matched.points
-                            } else if let best = scores.max(by: { ($0.points_half_ppr ?? $0.points) < ($1.points_half_ppr ?? $1.points) }) {
-                                reconstructedFromRoster[player.id] = best.points_half_ppr ?? best.points
-                            }
-                        }
-
-                        if !reconstructedFromRoster.isEmpty {
-                            return reconstructedFromRoster
-                        } else {
-                            // as a last resort return playersPoints (preserve information)
-                            return playersPoints.mapValues { $0 }
-                        }
+                        return reconstructWithoutStarters(team: team, playersPoints: playersPoints, myEntry: myEntry, week: week)
                     }
                 }
             }
         }
         // 2) fallback: deduplicated roster.weeklyScores
+        return fallbackFromRoster(team: team, week: week)
+    }
+
+    private func reconstructFromStarters(starters: [String], playersPoints: [String: Double]) -> [String: Double] {
+        var map: [String: Double] = [:]
+        for pid in starters {
+            map[pid] = playersPoints[pid] ?? 0.0
+        }
+        return map
+    }
+
+    private func reconstructWithoutStarters(team: TeamStanding, playersPoints: [String: Double], myEntry: MatchupEntry, week: Int) -> [String: Double] {
+        // IMPORTANT PATCH:
+        // When players_points exists but starters list is missing, do NOT blindly return all players_points
+        // (bench + starters). That overcounts OPF. Instead:
+        //  1) Attempt to reconstruct starters greedily using players_points with position resolution
+        //     (this handles started-then-dropped players since players_points contains the actual starters' ids).
+        //  2) If greedy reconstruction from players_points fails (e.g., cannot resolve eligible picks),
+        //     fall back to reconstructing from roster.weeklyScores (legacy).
+        //  3) Only if both reconstructions fail, return the raw playersPoints as last resort.
+        //
+        // Greedy reconstruction from players_points:
+        struct Candidate {
+            let playerId: String
+            let basePos: String
+            let fantasy: [String]
+            let points: Double
+        }
+
+        var candidates: [Candidate] = []
+        for (pid, pts) in playersPoints {
+            var basePos = "UNK"
+            var alt: [String] = []
+            if let p = team.roster.first(where: { $0.id == pid }) {
+                basePos = p.position
+                alt = p.altPositions ?? []
+            } else if let raw = leagueManager.playerCache?[pid] ?? leagueManager.allPlayers[pid] {
+                // raw likely has `position` optional
+                basePos = raw.position ?? "WR"
+                // no altPositions in raw cache typically
+            } else {
+                // Unknown player — assume WR fallback to avoid dropping offensive points entirely
+                basePos = "WR"
+            }
+            candidates.append(Candidate(playerId: pid, basePos: basePos, fantasy: alt, points: pts))
+        }
+
+        // Determine lineup slots for greedy assignment (infer if missing)
+        let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
+        let slots = expandSlots(lineupConfig: lineupConfig)
+        var usedIds = Set<String>()
+        var selected: [String: Double] = [:]
+
+        if !slots.isEmpty && !candidates.isEmpty {
+            // Greedy selection: for each slot pick highest-scoring eligible candidate not already used
+            for slot in slots {
+                let allowed = allowedPositions(for: slot)
+                let pick = candidates
+                    .filter { !usedIds.contains($0.playerId) && isEligible(basePos: $0.basePos, fantasy: $0.fantasy, allowed: allowed) }
+                    .max(by: { $0.points < $1.points })
+                if let p = pick {
+                    usedIds.insert(p.playerId)
+                    selected[p.playerId] = p.points
+                }
+            }
+        }
+
+        if !selected.isEmpty {
+            return selected
+        }
+
+        // Fallback reconstruction using roster.weeklyScores (legacy behavior) — prefer matchup_id when available
+        var reconstructedFromRoster: [String: Double] = [:]
+        let preferredMid = myEntry.matchup_id
+        for player in team.roster {
+            let scores = player.weeklyScores.filter { $0.week == week }
+            if scores.isEmpty { continue }
+            if let matched = scores.first(where: { $0.matchup_id == preferredMid }) {
+                reconstructedFromRoster[player.id] = matched.points_half_ppr ?? matched.points
+            } else if let best = scores.max(by: { ($0.points_half_ppr ?? $0.points) < ($1.points_half_ppr ?? $1.points) }) {
+                reconstructedFromRoster[player.id] = best.points_half_ppr ?? best.points
+            }
+        }
+
+        if !reconstructedFromRoster.isEmpty {
+            return reconstructedFromRoster
+        } else {
+            // as a last resort return playersPoints (preserve information)
+            return playersPoints.mapValues { $0 }
+        }
+    }
+
+    private func fallbackFromRoster(team: TeamStanding, week: Int) -> [String: Double] {
         var result: [String: Double] = [:]
         var preferredMatchupId: Int? = nil
         if let league = league {
@@ -1087,9 +1098,9 @@ struct OffStatExpandedView: View {
 
     // MANAGEMENT PILL: closely matches TeamStatExpandedView's pill but applied to offense-only mgmt%
     private struct ManagementPill: View {
-        let ratio: Double        // 0.0 - 1.0
-        let mgmtPercent: Double  // 0-100
-        let delta: Double        // mgmt change since prior week (percentage points)
+        let ratio: Double       // 0.0 - 1.0
+        let mgmtPercent: Double // 0-100
+        let delta: Double       // mgmt change since prior week (percentage points)
         let mgmtColor: Color
 
         private let pillHeight: CGFloat = 24
@@ -1178,73 +1189,3 @@ struct OffStatExpandedView: View {
     }
 }
 
-// MARK: - Offense Position Balance Detail Sheet
-private struct OffPositionBalanceDetailSheet: View {
-    let positionPercents: [String: Double]
-    let balancePercent: Double
-    let tagline: String
-
-    // Sort positions so we always show QB, RB, WR, TE, K in that order
-    private var orderedPositions: [String] { ["QB","RB","WR","TE","K"] }
-
-    // For consistent color mapping use same token as OffStatExpandedView
-    private var positionColors: [String: Color] {
-        [
-            "QB": .red,
-            "RB": .green,
-            "WR": .blue,
-            "TE": .yellow,
-            "K": Color.purple
-        ]
-    }
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Capsule().fill(Color.white.opacity(0.15)).frame(width: 40, height: 6).padding(.top, 8)
-            Text("Offensive Balance — Position Breakdown")
-                .font(.headline)
-                .foregroundColor(.yellow)
-
-            VStack(spacing: 10) {
-                ForEach(orderedPositions, id: \.self) { pos in
-                    let pct = positionPercents[pos] ?? 0
-                    HStack(spacing: 12) {
-                        Text(pos)
-                            .font(.subheadline).bold()
-                            .frame(width: 48, alignment: .leading)
-                            .foregroundColor(.white)
-                        ProgressView(value: min(max(pct / 100.0, 0.0), 1.0))
-                            .progressViewStyle(LinearProgressViewStyle(tint: positionColors[pos] ?? .white))
-                            .frame(height: 10)
-                        Text(String(format: "%.2f%%", pct))
-                            .font(.caption2).bold()
-                            .foregroundColor(.white.opacity(0.9))
-                            .frame(width: 64, alignment: .trailing)
-                    }
-                }
-            }
-            .padding(.horizontal)
-
-            HStack {
-                Text("⚖️ Balance")
-                    .font(.subheadline).bold()
-                    .foregroundColor(.white)
-                Spacer()
-                Text(String(format: "%.2f%% Variation", balancePercent))
-                    .font(.subheadline).bold()
-                    .foregroundColor(balancePercent < 8 ? .green : (balancePercent < 16 ? .yellow : .red))
-            }
-            .padding(.horizontal)
-
-            Text(tagline)
-                .font(.caption2)
-                .foregroundColor(.yellow)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            Spacer(minLength: 8)
-        }
-        .padding(.bottom, 12)
-        .background(Color.black)
-    }
-}
