@@ -181,16 +181,3 @@ struct EfficiencyInfoSheet: View {
         }
     }
 }
-
-#if DEBUG
-struct ConsistencyEfficiencySheets_Previews: PreviewProvider {
-    static var previews: some View {
-        Group {
-            ConsistencyInfoSheet(stdDev: 22.4, descriptor: "Average volatility across the sample")
-            EfficiencyInfoSheet(managementPercent: 68.2, pointsFor: 1123, maxPointsFor: 1675)
-        }
-        .preferredColorScheme(.dark)
-        .previewLayout(.sizeThatFits)
-    }
-}
-#endif
