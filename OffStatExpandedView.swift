@@ -897,46 +897,59 @@ struct OffStatExpandedView: View {
         return "Unbalanced — offense relies heavily on specific positions."
     }
 
-    // View: Offensive Efficiency Spotlight (gauges layout: 3 on top row, 2 below with center Balance)
+    // View: Offensive Efficiency Spotlight
+    // REWORKED LAYOUT:
+    // - 3 equal columns
+    // - Top row: QB (left), RB (center), WR (right)
+    // - Bottom row: TE (left, under QB), Balance (center, under RB), K (right, under WR)
+    // This will ensure RB and Balance are vertically aligned/centered and QB/TE align left, WR/K align right.
     private var offensiveEfficiencySpotlight: some View {
-        VStack(spacing: 8) {
-            // Top row: QB, RB, WR
-            HStack(spacing: 12) {
-                ForEach(["QB","RB","WR"], id: \.self) { pos in
-                    positionGauge(position: pos, percent: positionMgmtPercents[pos] ?? 0)
+        GeometryReader { geo in
+            let totalWidth = geo.size.width
+            let spacing: CGFloat = 12
+            let columnWidth = max(80, (totalWidth - spacing * 2) / 3)
+
+            HStack(alignment: .top, spacing: spacing) {
+                // LEFT COLUMN: QB (top) / TE (bottom)
+                VStack(spacing: 12) {
+                    positionGauge(position: "QB", percent: positionMgmtPercents["QB"] ?? 0)
+                    Spacer()
+                    positionGauge(position: "TE", percent: positionMgmtPercents["TE"] ?? 0)
                 }
-                Spacer(minLength: 8)
-                // Info button removed per request (no Mgmt% popup)
+                .frame(width: columnWidth, alignment: .center)
+
+                // CENTER COLUMN: RB (top) / Balance (bottom) — Balance centered under RB
+                VStack(spacing: 12) {
+                    positionGauge(position: "RB", percent: positionMgmtPercents["RB"] ?? 0)
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Text("⚖️ \(String(format: "%.2f%%", positionBalancePercent))")
+                            .font(.subheadline).bold()
+                            .foregroundColor(positionBalancePercent < 8 ? .green : (positionBalancePercent < 16 ? .yellow : .red))
+                            .accessibilityLabel("Offensive balance")
+                            .accessibilityValue(String(format: "%.2f percent balance score", positionBalancePercent))
+                        Text(generatePositionBalanceTagline())
+                            .font(.caption2)
+                            .foregroundColor(.yellow)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .frame(maxWidth: columnWidth * 0.95)
+                    }
+                }
+                .frame(width: columnWidth, alignment: .center)
+
+                // RIGHT COLUMN: WR (top) / K (bottom)
+                VStack(spacing: 12) {
+                    positionGauge(position: "WR", percent: positionMgmtPercents["WR"] ?? 0)
+                    Spacer()
+                    positionGauge(position: "K", percent: positionMgmtPercents["K"] ?? 0)
+                }
+                .frame(width: columnWidth, alignment: .center)
             }
-            .frame(height: 78)
-
-            // Bottom row: TE | Balance | K
-            HStack(spacing: 12) {
-                positionGauge(position: "TE", percent: positionMgmtPercents["TE"] ?? 0)
-
-                // Center balance badge
-                VStack(spacing: 6) {
-                    Text("⚖️ \(String(format: "%.2f%%", positionBalancePercent))")
-                        .font(.subheadline).bold()
-                        .foregroundColor(positionBalancePercent < 8 ? .green : (positionBalancePercent < 16 ? .yellow : .red))
-                        .accessibilityLabel("Offensive balance")
-                        .accessibilityValue(String(format: "%.2f percent balance score", positionBalancePercent))
-                    Text(generatePositionBalanceTagline())
-                        .font(.caption2)
-                        .foregroundColor(.yellow)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .frame(maxWidth: 180)
-                }
-                .onTapGesture {
-                    // Detail sheet removed — no action. If you want a simple popup later, reintroduce a sheet or call the BalanceDetailSheet from TeamStatExpandedView.
-                }
-                .frame(maxWidth: .infinity)
-
-                positionGauge(position: "K", percent: positionMgmtPercents["K"] ?? 0)
-            }
-            .frame(height: 78)
+            .frame(width: totalWidth, height: geo.size.height)
         }
+        // Provide a reasonable fixed height that matches previous two-row visual density.
+        .frame(height: 170)
         .padding(.vertical, 4)
     }
 
