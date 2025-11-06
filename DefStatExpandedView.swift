@@ -9,6 +9,11 @@
 //  players via SleeperLeagueManager caches, use non-zero completed weeks for averages, and apply
 //  defense-only grading via gradeTeamsDefense.
 //
+//  UPDATED: Mirror OffStatExpandedView UX/structure — top title + 4 stat bubbles (Grade, DPF, DMPF, DPPW),
+//  ManagementPill for lineup efficiency, and a Defensive Efficiency Spotlight (position-level mgmt% gauges)
+//  with a tappable balance center that shows a detail sheet. All logic mirrors the offense view but
+//  applied to defense (DL/LB/DB).
+//
 
 import SwiftUI
 
@@ -19,11 +24,13 @@ struct DefStatExpandedView: View {
 
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
+    // NEW: show detail sheet for defensive position balance
+    @State private var showDefBalanceDetail = false
 
     // Defensive positions
     private let defPositions: [String] = ["DL", "LB", "DB"]
 
-    // Position color mapping
+    // Position color mapping (kept consistent with OffStat)
     private var positionColors: [String: Color] {
         [
             "QB": .red,
@@ -427,9 +434,130 @@ struct DefStatExpandedView: View {
         return arr
     }
 
+    // MARK: - UI: Top Title + 4 stat bubbles (Grade, DPF, DMPF, DPPW)
+    /// A generic stat bubble builder (copied from OffStatExpandedView for parity).
+    @ViewBuilder
+    private func statBubble<Content: View, Caption: View>(width: CGFloat, height: CGFloat, @ViewBuilder content: @escaping () -> Content, @ViewBuilder caption: @escaping () -> Caption) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                // Slight glass/bubble effect background
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.03))
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.02), Color.white.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.45), radius: 6, x: 0, y: 2)
+                    .frame(width: width, height: height)
+                    .overlay(
+                        // subtle specular shine
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.05), Color.white.opacity(0.0)]), startPoint: .top, endPoint: .center))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    )
+                content()
+            }
+            caption()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
+            // Title + bubble row (grade, DPF, DMPF, DPPW)
+            VStack(spacing: 8) {
+                // Title uses selected team name like TeamStatExpandedView / OffStatExpandedView
+                let viewerName: String = {
+                    if let team = team {
+                        return team.name
+                    }
+                    if let uname = appSelection.currentUsername, !uname.isEmpty { return uname }
+                    return appSelection.userTeam.isEmpty ? "Team" : appSelection.userTeam
+                }()
+                Text("\(viewerName)'s Defense Drop")
+                    .font(.custom("Phatt", size: 20))
+                    .bold()
+                    .foregroundColor(.yellow)
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+
+                GeometryReader { geo in
+                    let horizontalPadding: CGFloat = 8
+                    let spacing: CGFloat = 10
+                    let itemCount: CGFloat = 4 // Grade, DPF, DMPF, DPPW
+                    let available = max(0, geo.size.width - horizontalPadding * 2 - (spacing * (itemCount - 1)))
+                    let bubbleSize = min(72, floor(available / itemCount))
+                    HStack(spacing: spacing) {
+                        // 1) Grade
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            if let g = computedGrade?.grade {
+                                ElectrifiedGrade(grade: g, fontSize: min(28, bubbleSize * 0.6))
+                                    .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                            } else {
+                                Text("--")
+                                    .font(.system(size: bubbleSize * 0.32, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                            }
+                        } caption: {
+                            Text("Grade")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+
+                        // 2) DPF (Defensive Points For)
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            Text(String(format: "%.2f", sidePoints))
+                                .font(.system(size: bubbleSize * 0.30, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                        } caption: {
+                            Text("DPF")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+
+                        // 3) DMPF (Defensive Max Points For)
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            Text(String(format: "%.2f", sideMaxPoints))
+                                .font(.system(size: bubbleSize * 0.30, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                        } caption: {
+                            Text("DMPF")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+
+                        // 4) DPPW (Defensive PPW)
+                        // Uses seasonAvg computed from non-zero completed weeks derived from the same weekly totals.
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            Text(String(format: "%.2f", seasonAvg))
+                                .font(.system(size: bubbleSize * 0.36, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.4)
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78, alignment: .center)
+                        } caption: {
+                            Text("DPPW")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                    }
+                    .padding(.horizontal, horizontalPadding)
+                    .frame(width: geo.size.width, height: bubbleSize + 26, alignment: .center)
+                }
+                .frame(height: 96)
+            }
+
             sectionHeader("Defensive Weekly Trend")
             // Chart: Excludes current week if incomplete, uses normalized positions
             StackedBarWeeklyChart(
@@ -446,8 +574,14 @@ struct DefStatExpandedView: View {
                 showDefensePositionsLegend: true   // show DL/LB/DB
             )
             .frame(height: 140)
+
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
+
+            // NEW: Defensive Efficiency Spotlight (position-level Mgmt% gauges)
+            sectionHeader("Defensive Efficiency Spotlight")
+            defensiveEfficiencySpotlight
+
             sectionHeader("Recent Form")
             recentForm
             if let team = team, let league = league {
@@ -474,23 +608,15 @@ struct DefStatExpandedView: View {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
                 .presentationDetents([.fraction(0.40)])
         }
-        .sheet(isPresented: $showEfficiencyInfo) {
-            EfficiencyInfoSheet(managementPercent: managementPercent,
-                                pointsFor: sidePoints,
-                                maxPointsFor: sideMaxPoints)
-            .presentationDetents([.fraction(0.35)])
+        // Present the DefensiveBalanceInfoSheet when user taps the center Balance element
+        .sheet(isPresented: $showDefBalanceDetail) {
+            DefensiveBalanceInfoSheet(
+                positionPercents: positionMgmtPercents,
+                balancePercent: positionBalancePercent,
+                tagline: generatePositionBalanceTagline()
+            )
+            .presentationDetents([PresentationDetent.fraction(0.40)])
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            // Show defensive totals computed from authoritative weekly sums
-            Text("DPF \(String(format: "%.2f", sidePoints))")
-            Divider().frame(height: 10).background(Color.white.opacity(0.3))
-            Text("DPPW \(String(format: "%.2f", seasonAvg))")
-        }
-        .font(.caption)
-        .foregroundColor(.white.opacity(0.85))
     }
 
     private func sectionHeader(_ text: String) -> some View {
@@ -500,29 +626,162 @@ struct DefStatExpandedView: View {
             .padding(.top, 4)
     }
 
+    // REPLACED: The old statBlock + EfficiencyBar combo is now replaced by a ManagementPill identical to OffStatExpandedView,
+    // but showing the defense-only Mgmt% (managementPercent), with delta computed by priorManagementPercent.
     private var lineupEfficiency: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                statBlock(title: "DPF", value: sidePoints)
-                statBlock(title: "Max", value: sideMaxPoints)
-                statBlockPercent(title: "Mgmt%", value: managementPercent)
-            }
-            EfficiencyBar(ratio: managementPercent / 100.0, height: 12)
-                .frame(height: 12)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    HStack {
-                        Spacer()
-                        Button { showEfficiencyInfo = true } label: {
-                            Image(systemName: "info.circle")
-                                .foregroundColor(.white.opacity(0.75))
-                                .font(.caption)
-                        }
-                        .padding(.trailing, 4)
-                    }
-                )
+            ManagementPill(
+                ratio: max(0.0, min(1.0, managementPercent / 100.0)),
+                mgmtPercent: managementPercent,
+                delta: managementDelta,
+                mgmtColor: mgmtColor(for: managementPercent)
+            )
+            .padding(.vertical, 2)
+
+            // Removed info button per request (no popup for Mgmt%).
         }
     }
+
+    // MARK: - Defensive Efficiency Spotlight helpers
+
+    // Returns per-position mgmt% using DSDStatsService (season vs all-time)
+    private var positionMgmtPercents: [String: Double] {
+        guard let team = team else { return [:] }
+        var dict: [String: Double] = [:]
+        for pos in defPositions {
+            let mgmt: Double
+            if isAllTime {
+                if let agg = aggregate {
+                    mgmt = DSDStatsService.shared.managementPercentForPosition(allTimeAgg: agg, position: pos)
+                } else {
+                    // Fallback to TeamStanding field if present
+                    mgmt = team.positionAverages?[PositionNormalizer.normalize(pos)] ?? 0
+                }
+            } else {
+                mgmt = DSDStatsService.shared.managementPercentForPosition(
+                    team: team,
+                    position: pos,
+                    league: league,
+                    selectedSeason: appSelection.selectedSeason,
+                    leagueManager: leagueManager
+                )
+            }
+            dict[pos] = mgmt
+        }
+        return dict
+    }
+
+    // Compute coefficient-of-variation based balance percent for the three defense positions.
+    // balancePercent = (stdDev(mgmtPercents) / mean(mgmtPercents)) * 100
+    // Lower = more balanced. We clamp and handle zero mean gracefully.
+    private var positionBalancePercent: Double {
+        let vals = defPositions.compactMap { positionMgmtPercents[$0] }
+        guard !vals.isEmpty else { return 0 }
+        let mean = vals.reduce(0, +) / Double(vals.count)
+        guard mean > 0 else { return 0 }
+        let variance = vals.reduce(0) { $0 + pow($1 - mean, 2) } / Double(vals.count)
+        let sd = sqrt(variance)
+        return (sd / mean) * 100
+    }
+
+    // Tagline generator for the position balance
+    private func generatePositionBalanceTagline() -> String {
+        let balance = positionBalancePercent
+        if balance < 8 { return "Well-balanced front — usage distributed among DL/LB/DB." }
+        if balance < 16 { return "Some positional skew — one group picks up more of the load." }
+        // Determine heavy positions (significantly above mean)
+        let mgmts = positionMgmtPercents
+        let mean = mgmts.values.reduce(0, +) / Double(max(1, mgmts.count))
+        let heavy = mgmts.filter { $0.value > mean + 10 }.map { $0.key }
+        if !heavy.isEmpty {
+            return "Skewed towards: \(heavy.joined(separator: ", ")). Consider balancing matchups."
+        }
+        return "Unbalanced — defense relies heavily on specific position groups."
+    }
+
+    // View: Defensive Efficiency Spotlight
+    // Layout:
+    // - 3 columns (DL, LB, DB) with gauges; center (LB) includes balance center tappable to show detail sheet.
+    private var defensiveEfficiencySpotlight: some View {
+        GeometryReader { geo in
+            let totalWidth = geo.size.width
+            let spacing: CGFloat = 12
+            let columnWidth = max(80, (totalWidth - spacing * 2) / 3)
+
+            HStack(alignment: .top, spacing: spacing) {
+                // LEFT: DL
+                VStack(spacing: 12) {
+                    positionGauge(position: "DL", percent: positionMgmtPercents["DL"] ?? 0)
+                    Spacer()
+                }
+                .frame(width: columnWidth, alignment: .center)
+
+                // CENTER: LB + Balance
+                VStack(spacing: 12) {
+                    positionGauge(position: "LB", percent: positionMgmtPercents["LB"] ?? 0)
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Text("⚖️ \(String(format: "%.2f%%", positionBalancePercent))")
+                            .font(.subheadline).bold()
+                            .foregroundColor(positionBalancePercent < 8 ? .green : (positionBalancePercent < 16 ? .yellow : .red))
+                            .accessibilityLabel("Defensive balance")
+                            .accessibilityValue(String(format: "%.2f percent balance score", positionBalancePercent))
+                        Text(generatePositionBalanceTagline())
+                            .font(.caption2)
+                            .foregroundColor(.yellow)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .frame(maxWidth: columnWidth * 0.95)
+                    }
+                    .onTapGesture {
+                        showDefBalanceDetail = true
+                    }
+                }
+                .frame(width: columnWidth, alignment: .center)
+
+                // RIGHT: DB
+                VStack(spacing: 12) {
+                    positionGauge(position: "DB", percent: positionMgmtPercents["DB"] ?? 0)
+                    Spacer()
+                }
+                .frame(width: columnWidth, alignment: .center)
+            }
+            .frame(width: totalWidth, height: geo.size.height)
+        }
+        .frame(height: 170)
+        .padding(.vertical, 4)
+    }
+
+    // Single position gauge builder (matches OffStat's gauge style)
+    @ViewBuilder
+    private func positionGauge(position: String, percent: Double) -> some View {
+        VStack(spacing: 6) {
+            Gauge(value: max(0.0, min(1.0, percent/100.0))) {
+                EmptyView()
+            } currentValueLabel: {
+                Text(String(format: "%.2f%%", percent))
+                    .font(.caption2).bold()
+                    .foregroundColor(.white)
+            }
+            .gaugeStyle(.accessoryCircular)
+            .tint(Gradient(colors: [Color(red: 0.7, green: 0.0, blue: 0.0), Color(red: 0.0, green: 1.0, blue: 0.0)]))
+            .frame(width: 56, height: 56)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(position) Usage Efficiency")
+            .accessibilityValue(String(format: "%.2f percent", percent))
+
+            // Caption shows position + small color dot
+            HStack(spacing: 6) {
+                Circle().fill(positionColors[position] ?? .white).frame(width: 8, height: 8)
+                Text(position)
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.9))
+            }
+        }
+        .frame(maxWidth: 90)
+    }
+
+    // MARK: - Remaining UI (recentForm, consistencyRow, small helpers)
 
     private var recentForm: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -605,24 +864,6 @@ struct DefStatExpandedView: View {
 
     // Small components (consistent with OffStat/TeamStat)
 
-    private struct EfficiencyBar: View {
-        let ratio: Double
-        let height: CGFloat
-        var body: some View {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: height/2)
-                        .fill(Color.white.opacity(0.08))
-                    RoundedRectangle(cornerRadius: height/2)
-                        .fill(LinearGradient(colors: [.red, .orange, .yellow, .green],
-                                             startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(0, min(geo.size.width, geo.size.width * ratio)))
-                        .animation(.easeInOut(duration: 0.5), value: ratio)
-                }
-            }
-        }
-    }
-
     private struct ConsistencyMeter: View {
         let stdDev: Double
         private var norm: Double { max(0, min(1, stdDev / 60.0)) }
@@ -654,4 +895,367 @@ struct DefStatExpandedView: View {
                 .foregroundColor(.white)
         }
     }
+
+    // MANAGEMENT PILL: closely matches TeamStatExpandedView's pill but applied to defense-only mgmt%
+    private struct ManagementPill: View {
+        let ratio: Double       // 0.0 - 1.0
+        let mgmtPercent: Double // 0-100
+        let delta: Double       // mgmt change since prior week (percentage points)
+        let mgmtColor: Color
+
+        private let pillHeight: CGFloat = 24
+        private let dotSize: CGFloat = 10
+        private let horizontalPadding: CGFloat = 8
+
+        var body: some View {
+            VStack(spacing: 6) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: pillHeight/2)
+                            .fill(LinearGradient(
+                                colors: [Color(red: 0.6, green: 0.0, blue: 0.0), Color(red: 0.9, green: 0.95, blue: 0.0), Color.green],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            ))
+                            .frame(height: pillHeight)
+
+                        // subtle overlay to keep pill "filled" look consistent
+                        RoundedRectangle(cornerRadius: pillHeight/2)
+                            .stroke(Color.black.opacity(0.15), lineWidth: 0.5)
+                            .frame(height: pillHeight)
+
+                        // Dot marker
+                        let x = clampedX(for: geo.size.width)
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: dotSize, height: dotSize)
+                            .shadow(color: Color.black.opacity(0.6), radius: 2, x: 0, y: 1)
+                            .position(x: x, y: pillHeight/2)
+                    }
+                }
+                .frame(height: pillHeight)
+
+                // Percentage and delta aligned under dot marker
+                GeometryReader { geo in
+                    let x = clampedX(for: geo.size.width)
+                    ZStack {
+                        // full-width clear background so ZStack fills parent and we can use .position
+                        Color.clear
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(String(format: "%.2f%%", mgmtPercent))
+                                .font(.subheadline).bold()
+                                .foregroundColor(mgmtColor)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                            // Delta to right in smaller font
+                            Text(deltaText)
+                                .font(.caption2)
+                                .foregroundColor(delta >= 0 ? Color.green : Color.red)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                                .padding(.top, 2)
+                        }
+                        .fixedSize()                 // keep intrinsic width, do not compress
+                        .position(x: x, y: 11)      // center the HStack at the dot's x and mid of the 22pt row
+                    }
+                }
+                .frame(height: 22)
+            }
+        }
+
+        private func clampedX(for totalWidth: CGFloat) -> CGFloat {
+            // leave horizontalPadding from edges
+            let leftBound = horizontalPadding + dotSize/2
+            let rightBound = max(leftBound, totalWidth - horizontalPadding - dotSize/2)
+            let raw = totalWidth * CGFloat(ratio)
+            return min(max(raw, leftBound), rightBound)
+        }
+
+        // Option C: show signed absolute percentage-point difference with "pp" suffix (e.g. "+0.71 pp", "-0.61 pp")
+        private var deltaText: String {
+            if delta == 0 { return "0.00 pp" }
+            return String(format: "%+.2f pp", delta)
+        }
+    }
+
+    // New helpers to compute prior management percent and delta (mirror OffStat implementation)
+    private var latestValidWeekTotal: Double? {
+        guard let team else { return nil }
+        let pairs = zip(validWeeks, stackedBarWeekData)
+        if let last = pairs.reversed().first(where: { $0.1.total > 0 }) {
+            return last.1.total
+        }
+        if let weekly = team.weeklyActualLineupPoints {
+            let last = weekly.keys.sorted().reversed().first(where: { (weekly[$0] ?? 0) > 0 })
+            if let wk = last { return weekly[wk] }
+        }
+        return nil
+    }
+
+    private func findLatestValidWeek() -> Int? {
+        guard let team else { return nil }
+        let pairs = zip(validWeeks, stackedBarWeekData)
+        if let last = pairs.reversed().first(where: { $0.1.total > 0 }) {
+            return last.0
+        }
+        if let weekly = team.weeklyActualLineupPoints {
+            let lastKey = weekly.keys.sorted().reversed().first(where: { (weekly[$0] ?? 0) > 0 })
+            if let wk = lastKey { return wk }
+        }
+        return nil
+    }
+
+    /// Compute the optimal (max) points for a given week by greedily selecting the highest-scoring eligible player for each lineup slot.
+    /// Returns nil if computation cannot be performed (e.g., no weekly scores available).
+    private func computeWeekMax(for week: Int) -> Double? {
+        guard let team = team else { return nil }
+        let roster = team.roster
+        // Determine lineup slots
+        let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: roster)
+        let slots = expandSlots(lineupConfig: lineupConfig)
+        if slots.isEmpty { return nil }
+        // Build candidates from roster (player id -> candidate)
+        struct Candidate {
+            let playerId: String
+            let basePos: String
+            let fantasy: [String]
+            let points: Double
+        }
+        var candidates: [Candidate] = []
+        for p in roster {
+            if let ws = p.weeklyScores.first(where: { $0.week == week }) {
+                let pts = ws.points_half_ppr ?? ws.points
+                candidates.append(Candidate(playerId: p.id, basePos: p.position, fantasy: p.altPositions ?? [], points: pts))
+            }
+        }
+        if candidates.isEmpty { return nil } // cannot compute
+        var used = Set<String>()
+        var weekMax: Double = 0.0
+        // Greedy: for each slot pick highest points candidate eligible and not used
+        for slot in slots {
+            let allowed = allowedPositions(for: slot)
+            let pick = candidates
+                .filter { !used.contains($0.playerId) && isEligible(basePos: $0.basePos, fantasy: $0.fantasy, allowed: allowed) }
+                .max(by: { $0.points < $1.points })
+            if let p = pick {
+                used.insert(p.playerId)
+                weekMax += p.points
+            }
+        }
+        // If we managed to fill at least one slot, return weekMax (0 could be legitimate).
+        return weekMax
+    }
+
+    // Prior management percent approximated by removing the latest completed week's contribution.
+    // Exclude the most recent week from BOTH numerator (points) and denominator (season max) when possible.
+    private var priorManagementPercent: Double {
+        guard let last = latestValidWeekTotal else { return 0 }
+        guard sideMaxPoints > 0 else { return 0 }
+        let priorPoints = max(0, sidePoints - last)
+        guard let lastWeek = findLatestValidWeek() else {
+            // can't find week index — fallback to original behavior
+            return (priorPoints / sideMaxPoints) * 100
+        }
+        if let lastWeekMax = computeWeekMax(for: lastWeek), lastWeekMax > 0 {
+            let priorMax = sideMaxPoints - lastWeekMax
+            if priorMax > 0 {
+                return (priorPoints / priorMax) * 100
+            } else {
+                return (priorPoints / sideMaxPoints) * 100
+            }
+        } else {
+            return (priorPoints / sideMaxPoints) * 100
+        }
+    }
+
+    private var managementDelta: Double {
+        managementPercent - priorManagementPercent
+    }
+
+    // Helper to determine mgmt color (attempt to match existing MgmtColor semantics)
+    private func mgmtColor(for pct: Double) -> Color {
+        // Reasonable mapping: >75 green, 60-75 yellow, <60 red
+        switch pct {
+        case let x where x >= 75: return .green
+        case let x where x >= 60: return .yellow
+        default: return .red
+        }
+    }
+
+    // Helper utilities reused
+    private func inferredLineupConfig(from roster: [Player]) -> [String: Int] {
+        var counts: [String:Int] = [:]
+        for p in roster {
+            // Normalize position for starter slot assignment
+            let normalized = PositionNormalizer.normalize(p.position)
+            counts[normalized, default: 0] += 1
+        }
+        return counts.mapValues { min($0, 3) }
+    }
+    private func expandSlots(lineupConfig: [String:Int]) -> [String] {
+        lineupConfig.flatMap { Array(repeating: $0.key, count: $0.value) }
+    }
+    private func allowedPositions(for slot: String) -> Set<String> {
+        switch slot.uppercased() {
+        case "QB","RB","WR","TE","K","DL","LB","DB": return [slot.uppercased()]
+        case "FLEX","WRRB","WRRBTE","WRRB_TE","RBWR","RBWRTE": return ["RB","WR","TE"]
+        case "SUPER_FLEX","QBRBWRTE","QBRBWR","QBSF","SFLX": return ["QB","RB","WR","TE"]
+        case "IDP": return ["DL","LB","DB"]
+        default:
+            if slot.uppercased().contains("IDP") { return ["DL","LB","DB"] }
+            return [slot.uppercased()]
+        }
+    }
+    private func isEligible(basePos: String, fantasy: [String], allowed: Set<String>) -> Bool {
+        let normalizedAllowed = Set(allowed.map { PositionNormalizer.normalize($0) })
+        let candidates = ([basePos] + fantasy).map { PositionNormalizer.normalize($0) }
+        return candidates.contains(where: { normalizedAllowed.contains($0) })
+    }
+
+    // Small components (copied/consistent with TeamStatExpandedView)
+    private struct EfficiencyBar: View {
+        let ratio: Double
+        let height: CGFloat
+        var body: some View {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: height/2)
+                        .fill(Color.white.opacity(0.08))
+                    RoundedRectangle(cornerRadius: height/2)
+                        .fill(LinearGradient(colors: [.red, .orange, .yellow, .green],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(0, min(geo.size.width, geo.size.width * ratio)))
+                        .animation(.easeInOut(duration: 0.5), value: ratio)
+                }
+            }
+        }
+    }
+
+    // MARK: - Defensive Balance Detail Sheet (mirrors OffPositionBalanceDetailSheet but for DL/LB/DB)
+    struct DefensiveBalanceInfoSheet: View {
+        let positionPercents: [String: Double]
+        let balancePercent: Double
+        let tagline: String
+
+        private var orderedPositions: [String] { ["DL","LB","DB"] }
+        private var positionColors: [String: Color] {
+            ["DL": .orange, "LB": .purple, "DB": .pink]
+        }
+
+        // Computations
+        private var valuesOrdered: [Double] { orderedPositions.map { positionPercents[$0] ?? 0.0 } }
+        private var mean: Double {
+            guard !valuesOrdered.isEmpty else { return 0 }
+            return valuesOrdered.reduce(0, +) / Double(valuesOrdered.count)
+        }
+        private var variance: Double {
+            guard !valuesOrdered.isEmpty else { return 0 }
+            return valuesOrdered.reduce(0) { $0 + pow($1 - mean, 2) } / Double(valuesOrdered.count)
+        }
+        private var sd: Double { sqrt(variance) }
+        private var recomputedBalance: Double {
+            guard mean > 0 else { return 0 }
+            return (sd / mean) * 100
+        }
+        private func fmt(_ v: Double) -> String { String(format: "%.2f", v) }
+
+        var body: some View {
+            VStack(spacing: 12) {
+                Capsule().fill(Color.white.opacity(0.15)).frame(width: 40, height: 6).padding(.top, 8)
+                Text("Defensive Balance — How the score is derived")
+                    .font(.headline)
+                    .foregroundColor(.yellow)
+                    .multilineTextAlignment(.center)
+                Text("Balance shows how evenly defensive usage is distributed across DL/LB/DB. Lower values mean usage is more even; higher values indicate one or more groups dominate.")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.9))
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal)
+                Divider().background(Color.white.opacity(0.12))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Example (derived from current position values):")
+                        .font(.subheadline).bold()
+                        .foregroundColor(.white)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(orderedPositions, id: \.self) { pos in
+                            HStack {
+                                Text(pos)
+                                    .font(.caption2).bold()
+                                    .foregroundColor(.white)
+                                    .frame(width: 36, alignment: .leading)
+                                Text("\(fmt(positionPercents[pos] ?? 0.0)) %")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.95))
+                                Spacer()
+                                if mean > 0 {
+                                    let diff = (positionPercents[pos] ?? 0) - mean
+                                    Text(diff >= 0 ? "+\(fmt(diff)) vs mean" : "\(fmt(diff)) vs mean")
+                                        .font(.caption2)
+                                        .foregroundColor(diff > 8 ? .green : (diff < -8 ? .orange : .gray))
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Mean (average Mgmt%)")
+                                .font(.caption2).foregroundColor(.white.opacity(0.85))
+                            Spacer()
+                            Text("\(fmt(mean)) %")
+                                .font(.caption2).bold().foregroundColor(.white)
+                        }
+                        HStack {
+                            Text("Standard deviation (SD)")
+                                .font(.caption2).foregroundColor(.white.opacity(0.85))
+                            Spacer()
+                            Text("\(fmt(sd))")
+                                .font(.caption2).bold().foregroundColor(.white)
+                        }
+                        HStack {
+                            Text("Balance (SD / Mean × 100)")
+                                .font(.caption2).foregroundColor(.white.opacity(0.85))
+                            Spacer()
+                            Text("\(fmt(recomputedBalance)) %")
+                                .font(.caption2).bold().foregroundColor(balancePercent < 8 ? .green : (balancePercent < 16 ? .yellow : .red))
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal)
+                    .background(Color.white.opacity(0.02))
+                    .cornerRadius(8)
+                }
+                .padding(.horizontal)
+
+                Divider().background(Color.white.opacity(0.12))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("How to interpret the numbers")
+                        .font(.subheadline).bold()
+                        .foregroundColor(.white)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("• balance < 8% — Very balanced: usage is well distributed across DL/LB/DB.")
+                        Text("• balance 8–16% — Moderately balanced: one group may take more of the load.")
+                        Text("• balance > 16% — Unbalanced: one or two groups dominate usage; consider roster or matchup adjustments.")
+                    }
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.9))
+                }
+                .padding(.horizontal)
+
+                Spacer(minLength: 12)
+            }
+            .padding(.bottom, 16)
+            .background(Color.black.edgesIgnoringSafeArea(.bottom))
+        }
+    }
+
+    // Reuse existing EfficiencyBar (kept for consistency but not used in lineupEfficiency anymore)
+    // (Already declared above)
+
+    // Helper: check if a PlayerWeeklyScore's player matches the target normalized position
+    // (Already implemented above)
 }
