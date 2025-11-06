@@ -1,4 +1,3 @@
-// https://github.com/ThirstyWallrus/10-17-25/blob/a17b188b627ea4e728bbba5584f5d108dbc557af/OffStatExpandedView.swift
 //
 //  OffStatExpandedView.swift
 //  DynastyStatDrop
@@ -6,11 +5,18 @@
 //  Uses authoritative matchup.players_points when available; sums starters only when starters present.
 //  Falls back to deduped roster.weeklyScores when necessary.
 //
+//  Updated to match TeamStatExpandedView patterns for app continuity:
+//   - Uses League/Sleeper caches when available
+//   - Computes grade via TeamGradeComponents + gradeTeams
+//   - Excludes empty/future weeks when computing OPPW (uses non-zero weeks like TeamStatExpandedView)
+//   - Uses ElectrifiedGrade for grade bubble and consistent fallbacks to aggregated all-time stats
+//
 
 import SwiftUI
 
 struct OffStatExpandedView: View {
     @EnvironmentObject var appSelection: AppSelection
+    @EnvironmentObject var leagueManager: SleeperLeagueManager
 
     @State private var showConsistencyInfo = false
     @State private var showEfficiencyInfo = false
@@ -18,17 +24,18 @@ struct OffStatExpandedView: View {
     // Offensive positions
     private let offPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
 
-    // Position color mapping
+    // Position color mapping (normalized tokens)
     private var positionColors: [String: Color] {
         [
-            "QB": .red,
-            "RB": .green,
-            "WR": .blue,
-            "TE": .yellow,
-            "K": Color.purple,
-            "DL": .orange,
-            "LB": .purple,
-            "DB": .pink
+            PositionNormalizer.normalize("QB"): .red,
+            PositionNormalizer.normalize("RB"): .green,
+            PositionNormalizer.normalize("WR"): .blue,
+            PositionNormalizer.normalize("TE"): .yellow,
+            PositionNormalizer.normalize("K"): Color.purple,
+            // keep defensive colors present for potential lookups
+            PositionNormalizer.normalize("DL"): .orange,
+            PositionNormalizer.normalize("LB"): .purple.opacity(0.7),
+            PositionNormalizer.normalize("DB"): .pink
         ]
     }
 
@@ -40,6 +47,105 @@ struct OffStatExpandedView: View {
     private var aggregate: AggregatedOwnerStats? {
         guard isAllTime, let league, let team else { return nil }
         return league.allTimeOwnerStats?[team.ownerId]
+    }
+
+    // MARK: - Grade computation (use TeamGradeComponents & gradeTeams for consistency)
+    private var computedGrade: (grade: String, composite: Double)? {
+        guard let lg = league else { return nil }
+        let teamsToProcess: [TeamStanding] = {
+            if !isAllTime, let season = lg.seasons.first(where: { $0.id == appSelection.selectedSeason }) {
+                return season.teams
+            }
+            return lg.seasons.sorted { $0.id < $1.id }.last?.teams ?? lg.teams
+        }()
+        var comps: [TeamGradeComponents] = []
+        for t in teamsToProcess {
+            // For all-time, prefer aggregated owner stats if present
+            let aggOwner: AggregatedOwnerStats? = {
+                if isAllTime { return lg.allTimeOwnerStats?[t.ownerId] }
+                return nil
+            }()
+
+            let pf: Double = {
+                if isAllTime { return aggOwner?.totalPointsFor ?? t.pointsFor }
+                return t.pointsFor
+            }()
+            let mpf: Double = {
+                if isAllTime { return aggOwner?.totalMaxPointsFor ?? t.maxPointsFor }
+                return t.maxPointsFor
+            }()
+            let mgmt = (mpf > 0) ? (pf / mpf * 100) : (t.managementPercent)
+
+            let offMgmt: Double = {
+                if isAllTime {
+                    if let agg = aggOwner, agg.totalMaxOffensivePointsFor > 0 {
+                        return (agg.totalOffensivePointsFor / agg.totalMaxOffensivePointsFor) * 100
+                    }
+                    return t.offensiveManagementPercent ?? 0
+                } else {
+                    return t.offensiveManagementPercent ?? 0
+                }
+            }()
+
+            let defMgmt: Double = {
+                if isAllTime {
+                    if let agg = aggOwner, agg.totalMaxDefensivePointsFor > 0 {
+                        return (agg.totalDefensivePointsFor / agg.totalMaxDefensivePointsFor) * 100
+                    }
+                    return t.defensiveManagementPercent ?? 0
+                } else {
+                    return t.defensiveManagementPercent ?? 0
+                }
+            }()
+
+            let ppwVal: Double = {
+                if isAllTime {
+                    return aggOwner?.teamPPW ?? t.teamPointsPerWeek
+                }
+                if let lg2 = lg as LeagueData? {
+                    return (DSDStatsService.shared.stat(for: t, type: .teamAveragePPW, league: lg2, selectedSeason: appSelection.selectedSeason) as? Double) ?? t.teamPointsPerWeek
+                }
+                return t.teamPointsPerWeek
+            }()
+
+            let qb = (t.positionAverages?[PositionNormalizer.normalize("QB")] ?? 0)
+            let rb = (t.positionAverages?[PositionNormalizer.normalize("RB")] ?? 0)
+            let wr = (t.positionAverages?[PositionNormalizer.normalize("WR")] ?? 0)
+            let te = (t.positionAverages?[PositionNormalizer.normalize("TE")] ?? 0)
+            let k  = (t.positionAverages?[PositionNormalizer.normalize("K")]  ?? 0)
+            let dl = (t.positionAverages?[PositionNormalizer.normalize("DL")] ?? 0)
+            let lb = (t.positionAverages?[PositionNormalizer.normalize("LB")] ?? 0)
+            let db = (t.positionAverages?[PositionNormalizer.normalize("DB")] ?? 0)
+
+            let (w,l,ties) = TeamGradeComponents.parseRecord(t.winLossRecord)
+            let recordPct = (w + l + ties) > 0 ? Double(w) / Double(max(1, w + l + ties)) : 0.0
+
+            let comp = TeamGradeComponents(
+                pointsFor: pf,
+                ppw: ppwVal,
+                mgmt: mgmt,
+                offMgmt: offMgmt,
+                defMgmt: defMgmt,
+                recordPct: recordPct,
+                qbPPW: qb,
+                rbPPW: rb,
+                wrPPW: wr,
+                tePPW: te,
+                kPPW: k,
+                dlPPW: dl,
+                lbPPW: lb,
+                dbPPW: db,
+                teamName: t.name,
+                teamId: t.id
+            )
+            comps.append(comp)
+        }
+
+        let graded = gradeTeams(comps)
+        if let team = team, let found = graded.first(where: { $0.0 == team.name }) {
+            return (found.1, found.2)
+        }
+        return nil
     }
 
     // MARK: - Weeks to Include (Exclude Current Week if Incomplete)
@@ -128,14 +234,27 @@ struct OffStatExpandedView: View {
             let playerPoints = authoritativePointsForWeek(team: team, week: week)
             var posSums: [String: Double] = [:]
             for (pid, pts) in playerPoints {
+                // Prefer roster lookup; fall back to cached player info, and default to WR to preserve totals if unresolved.
                 if let player = team.roster.first(where: { $0.id == pid }) {
                     let norm = PositionNormalizer.normalize(player.position)
                     if ["QB","RB","WR","TE","K"].contains(norm) {
                         posSums[norm, default: 0.0] += pts
+                    } else {
+                        // non-offensive credited to WR bucket for chart totals (conservative)
+                        posSums["WR", default: 0.0] += pts
                     }
+                } else if let raw = leagueManager.playerCache?[pid] ?? leagueManager.allPlayers[pid] {
+                    let pos = PositionNormalizer.normalize(raw.position ?? "WR")
+                    if ["QB","RB","WR","TE","K"].contains(pos) {
+                        posSums[pos, default: 0.0] += pts
+                    } else {
+                        posSums["WR", default: 0.0] += pts
+                    }
+                } else {
+                    posSums["WR", default: 0.0] += pts
                 }
             }
-            // Build segments with explicit type to avoid ambiguous/failed casts
+            // Build segments using offPositions (QB,RB,WR,TE,K) to keep chart consistent
             let segments: [StackedBarWeeklyChart.WeekBarData.Segment] = offPositions.map { pos in
                 let norm = PositionNormalizer.normalize(pos)
                 return StackedBarWeeklyChart.WeekBarData.Segment(id: pos, position: norm, value: posSums[norm] ?? 0)
@@ -155,18 +274,31 @@ struct OffStatExpandedView: View {
         stackedBarWeekData.map { $0.total }
     }
 
-    private var weeksPlayed: Int { sideWeeklyPoints.count }
+    // Use only non-zero weeks (completed weeks) for averages — matches TeamStatExpandedView behavior.
+    private var sideWeeklyPointsNonZero: [Double] {
+        let nonZero = sideWeeklyPoints.filter { $0 > 0.0 }
+        if nonZero.isEmpty, let team = team, let weekly = team.weeklyActualLineupPoints {
+            let vals = weekly.keys.sorted().map { weekly[$0] ?? 0.0 }.filter { $0 > 0.0 }
+            if !vals.isEmpty { return vals }
+        }
+        return nonZero
+    }
+
+    private var weeksPlayed: Int { sideWeeklyPointsNonZero.count }
+
     private var last3Avg: Double {
         guard weeksPlayed > 0 else { return 0 }
-        return sideWeeklyPoints.suffix(3).reduce(0,+)/Double(min(3,weeksPlayed))
+        return sideWeeklyPointsNonZero.suffix(3).reduce(0,+)/Double(min(3,weeksPlayed))
     }
+
     private var seasonAvg: Double {
-        guard weeksPlayed > 0 else {
-            if let agg = aggregate { return agg.offensivePPW }
-            return team?.averageOffensivePPW ?? 0
+        if weeksPlayed > 0 {
+            return sideWeeklyPointsNonZero.reduce(0, +) / Double(weeksPlayed)
         }
-        return sideWeeklyPoints.reduce(0,+)/Double(weeksPlayed)
+        if let agg = aggregate { return agg.offensivePPW }
+        return team?.averageOffensivePPW ?? 0
     }
+
     private var formDelta: Double { last3Avg - seasonAvg }
     private var formDeltaColor: Color {
         if formDelta > 2 { return .green }
@@ -194,7 +326,7 @@ struct OffStatExpandedView: View {
     private var stdDev: Double {
         guard weeksPlayed > 1 else { return 0 }
         let mean = seasonAvg
-        let variance = sideWeeklyPoints.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeksPlayed)
+        let variance = sideWeeklyPointsNonZero.reduce(0) { $0 + pow($1 - mean, 2) } / Double(weeksPlayed)
         return sqrt(variance)
     }
     private var consistencyDescriptor: String {
@@ -239,24 +371,142 @@ struct OffStatExpandedView: View {
         return arr
     }
 
+    // MARK: - UI: Top Title + 4 stat bubbles (Grade, OPF, OMPF, OPPW)
+
+    @ViewBuilder
+    private func statBubble<Content: View, Caption: View>(width: CGFloat, height: CGFloat, @ViewBuilder content: @escaping () -> Content, @ViewBuilder caption: @escaping () -> Caption) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.03))
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.02), Color.white.opacity(0.01)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.45), radius: 6, x: 0, y: 2)
+                    .frame(width: width, height: height)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.05), Color.white.opacity(0.0)]), startPoint: .top, endPoint: .center))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    )
+                content()
+            }
+            caption()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
+            // Title + bubble row (grade, OPF, OMPF, OPPW)
+            VStack(spacing: 8) {
+                // Title uses selected team name like TeamStatExpandedView
+                let viewerName: String = {
+                    if let team = team {
+                        return team.name
+                    }
+                    if let uname = appSelection.currentUsername, !uname.isEmpty { return uname }
+                    return appSelection.userTeam.isEmpty ? "Team" : appSelection.userTeam
+                }()
+                Text("\(viewerName)'s Offense Drop")
+                    .font(.custom("Phatt", size: 20))
+                    .bold()
+                    .foregroundColor(.yellow)
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+
+                GeometryReader { geo in
+                    let horizontalPadding: CGFloat = 8
+                    let spacing: CGFloat = 10
+                    let itemCount: CGFloat = 4 // Grade, OPF, OMPF, OPPW
+                    let available = max(0, geo.size.width - horizontalPadding * 2 - (spacing * (itemCount - 1)))
+                    let bubbleSize = min(72, floor(available / itemCount))
+                    HStack(spacing: spacing) {
+                        // 1) Grade
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            if let g = computedGrade?.grade {
+                                ElectrifiedGrade(grade: g, fontSize: min(28, bubbleSize * 0.6))
+                                    .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                            } else {
+                                Text("--")
+                                    .font(.system(size: bubbleSize * 0.32, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                            }
+                        } caption: {
+                            Text("Grade")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+
+                        // 2) OPF (Offensive Points For)
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            Text(String(format: "%.2f", sidePoints))
+                                .font(.system(size: bubbleSize * 0.30, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                        } caption: {
+                            Text("OPF")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+
+                        // 3) OMPF (Offensive Max Points For)
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            Text(String(format: "%.2f", sideMaxPoints))
+                                .font(.system(size: bubbleSize * 0.30, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
+                        } caption: {
+                            Text("OMPF")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+
+                        // 4) OPPW (Offensive PPW)
+                        statBubble(width: bubbleSize, height: bubbleSize) {
+                            Text(String(format: "%.2f", seasonAvg))
+                                .font(.system(size: bubbleSize * 0.36, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.4)
+                                .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78, alignment: .center)
+                        } caption: {
+                            Text("OPPW")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                    }
+                    .padding(.horizontal, horizontalPadding)
+                    .frame(width: geo.size.width, height: bubbleSize + 26, alignment: .center)
+                }
+                .frame(height: 96)
+            }
+
             sectionHeader("Offensive Weekly Trend")
             StackedBarWeeklyChart(
-                            weekBars: stackedBarWeekData,
-                            positionColors: positionColors,
-                            showPositions: Set(offPositions),
-                            gridIncrement: 25,
-                            barSpacing: 4,
-                            tooltipFont: .caption2.bold(),
-                            showWeekLabels: true,
-                            aggregateToOffDef: false,
-                            showAggregateLegend: false,
-                            showOffensePositionsLegend: true,    // show QB/RB/WR/TE/K
-                            showDefensePositionsLegend: false
-                        )
-                        .frame(height: 140)
+                weekBars: stackedBarWeekData,
+                positionColors: positionColors,
+                showPositions: Set(offPositions),
+                gridIncrement: 25,
+                barSpacing: 4,
+                tooltipFont: .caption2.bold(),
+                showWeekLabels: true,
+                aggregateToOffDef: false,
+                showAggregateLegend: false,
+                showOffensePositionsLegend: true,
+                showDefensePositionsLegend: false
+            )
+            .frame(height: 140)
 
             sectionHeader("Lineup Efficiency")
             lineupEfficiency
@@ -286,16 +536,6 @@ struct OffStatExpandedView: View {
                                 maxPointsFor: sideMaxPoints)
             .presentationDetents([.fraction(0.35)])
         }
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Text("OFF PF \(String(format: "%.2f", sidePoints))")
-            Divider().frame(height: 10).background(Color.white.opacity(0.3))
-            Text("Avg \(String(format: "%.2f", seasonAvg))")
-        }
-        .font(.caption)
-        .foregroundColor(.white.opacity(0.85))
     }
 
     private func sectionHeader(_ text: String) -> some View {
@@ -408,7 +648,7 @@ struct OffStatExpandedView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // Small components omitted for brevity (unchanged)
+    // Small components (copied/consistent with TeamStatExpandedView)
     private struct EfficiencyBar: View {
         let ratio: Double
         let height: CGFloat
@@ -426,6 +666,7 @@ struct OffStatExpandedView: View {
             }
         }
     }
+
     private struct ConsistencyMeter: View {
         let stdDev: Double
         private var norm: Double { max(0, min(1, stdDev / 60.0)) }
