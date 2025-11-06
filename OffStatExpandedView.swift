@@ -30,7 +30,8 @@ struct OffStatExpandedView: View {
     @State private var showConsistencyInfo = false
     // Removed showEfficiencyInfo per request (info icon + popup removed)
 
-    // Note: showOffBalanceDetail and its sheet were removed — the UI now relies on the inline gauges only.
+    // Show detail sheet for offensive position balance (new: OffensiveBalanceInfoSheet)
+    @State private var showOffBalanceDetail = false
 
     // Offensive positions
     private let offPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
@@ -814,7 +815,15 @@ struct OffStatExpandedView: View {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
                 .presentationDetents([PresentationDetent.fraction(0.40)])
         }
-        // NOTE: OffPositionBalanceDetailSheet removed. If you delete that file, nothing else in this view needs to be moved.
+        // Present the OffensiveBalanceInfoSheet when user taps the center Balance element
+        .sheet(isPresented: $showOffBalanceDetail) {
+            // Use OffensiveBalanceInfoSheet (the explanatory popup you added to the project)
+            OffensiveBalanceInfoSheet(
+                positionPercents: positionMgmtPercents,
+                balancePercent: positionBalancePercent
+            )
+            .presentationDetents([PresentationDetent.fraction(0.40)])
+        }
     }
 
     private func sectionHeader(_ text: String) -> some View {
@@ -934,6 +943,10 @@ struct OffStatExpandedView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
                             .frame(maxWidth: columnWidth * 0.95)
+                    }
+                    // Make the balance area tappable to show the detailed OffensiveBalanceInfoSheet
+                    .onTapGesture {
+                        showOffBalanceDetail = true
                     }
                 }
                 .frame(width: columnWidth, alignment: .center)
