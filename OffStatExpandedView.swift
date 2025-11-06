@@ -11,7 +11,7 @@
 //  PATCH: Use SleeperLeagueManager player cache to include started-then-dropped players when computing weekly totals.
 //  NEW: Add ManagementPill to lineupEfficiency to mirror TeamStatExpandedView but show offense-only Mgmt%.
 //  FIX: Avoid counting full players_points (bench + starters) when matchup.players_points exists but starters list is missing.
-//       Instead attempt to reconstruct likely starters from players_points + eligible slot logic (greedy) first,
+//       Instead attempt to reconstruct likely starters greedily from players_points + eligible slot logic (greedy) first,
 //       then from roster.weeklyScores, and only fall back to returning players_points when reconstruction fails.
 //
 //  NOTE: This file replaces the previous approach which sometimes returned the entire players_points map
@@ -420,6 +420,11 @@ struct OffStatExpandedView: View {
 
     // Recompute OPF from the exact same weekly totals used to compute OPPW.
     // This prevents mismatch caused by using team.offensivePointsFor while seasonAvg uses stackedBarWeekData.
+    // NOTE: To maintain continuity with other views & persisted values we prefer authoritative stored fields
+    // (team.offensivePointsFor, team.maxOffensivePointsFor) when available. Only when those are missing
+    // do we fall back to a recomputed sum from stackedBarWeekData. This prevents divergence (e.g. OPF shown
+    // in OffStat differing from Team view / imported Sleeper values) while still allowing recompute when
+    // stored fields are not present.
     private var sidePointsComputed: Double {
         let sum = stackedBarWeekData.map { $0.total }.reduce(0, +)
         if sum > 0 { return sum }
@@ -427,13 +432,21 @@ struct OffStatExpandedView: View {
         return team?.offensivePointsFor ?? 0
     }
 
-    // Expose sidePoints (preferred to show computed sum; aggregate wins if in all-time)
+    // Expose sidePoints (preferred to show authoritative stored sum; aggregate wins in all-time)
     private var sidePoints: Double {
         if let agg = aggregate { return agg.totalOffensivePointsFor }
+        // Prefer TeamStanding.offensivePointsFor when present to keep continuity with other views / persisted data.
+        if let t = team, let stored = t.offensivePointsFor, stored > 0 {
+            return stored
+        }
         return sidePointsComputed
     }
+
     private var sideMaxPoints: Double {
         if let agg = aggregate { return agg.totalMaxOffensivePointsFor }
+        if let t = team, let stored = t.maxOffensivePointsFor, stored > 0 {
+            return stored
+        }
         return team?.maxOffensivePointsFor ?? 0
     }
     private var managementPercent: Double {
@@ -693,7 +706,7 @@ struct OffStatExpandedView: View {
                                 .foregroundColor(.white.opacity(0.8))
                         }
 
-                        // 2) OPF (Offensive Points For) - computed from stackedBarWeekData totals
+                        // 2) OPF (Offensive Points For) - prefer authoritative stored team value for continuity
                         statBubble(width: bubbleSize, height: bubbleSize) {
                             Text(String(format: "%.2f", sidePoints))
                                 .font(.system(size: bubbleSize * 0.30, weight: .bold))
