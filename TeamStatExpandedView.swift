@@ -681,7 +681,7 @@ struct TeamStatExpandedView: View {
                 GeometryReader { geo in
                     let horizontalPadding: CGFloat = 8
                     let spacing: CGFloat = 10
-                    // We now show 4 bubbles: Grade, PF, M%, PPW (MPF removed)
+                    // We now show 4 bubbles: Grade, PF, MPF, PPW (Mgmt% removed from top row)
                     let itemCount: CGFloat = 4
                     // compute available width inside the geometry reader
                     let available = max(0, geo.size.width - horizontalPadding * 2 - (spacing * (itemCount - 1)))
@@ -720,17 +720,17 @@ struct TeamStatExpandedView: View {
                                 .foregroundColor(.white.opacity(0.8))
                         }
                         
-                        // 3) Mgmt%
+                        // 3) MPF (Max Points For) - REPLACED the previous Management% bubble
                         statBubble(width: bubbleSize, height: bubbleSize) {
-                            // Changed to show two decimal places for percent
-                            Text(String(format: "%.2f%%", managementPercent))
-                                .font(.system(size: bubbleSize * 0.28, weight: .bold))
+                            // Show max points for with two decimal places
+                            Text(String(format: "%.2f", teamMaxPointsFor))
+                                .font(.system(size: bubbleSize * 0.30, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.5)
                                 .frame(width: bubbleSize * 0.78, height: bubbleSize * 0.78)
                         } caption: {
-                            Text("M%")
+                            Text("MPF")
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.8))
                         }
