@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-private struct OffPositionBalanceDetailSheet: View {
+struct OffPositionBalanceDetailSheet: View {
     let positionPercents: [String: Double]
     let balancePercent: Double
     let tagline: String
