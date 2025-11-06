@@ -16,7 +16,7 @@
 //
 //  NOTE: This file replaces the previous approach which sometimes returned the entire players_points map
 //  (bench + starters) when starters were not present in the matchup entry. That over-counted OPF in many
-//  leagues. The new logic reconstructs starters greedily from players_points (works for traded/dropped starters),
+//  leagues. The new logic reconstructs starters greedily from players_points (works for started-then-dropped players),
 //  using roster/league caches to determine positions. This should correct the OPF mismatch you reported.
 //
 
@@ -63,7 +63,7 @@ struct OffStatExpandedView: View {
     // MARK: - Grade computation (use TeamGradeComponents & gradeTeams for consistency)
     // Build TeamGradeComponents for teams in current league/season (or use all-time owner aggregates when available).
     // PATCH: Use offense-only composite scoring. Each TeamGradeComponents instance will have pointsFor set to
-    // the team's OFFENSIVE Points For and ppw set to offensive PPW to satisfy gradeTeamsOffense requirements.
+    // the team's OFFENSIVE Points For and ppw set to offensivePPW to satisfy gradeTeamsOffense requirements.
     private var computedGrade: (grade: String, composite: Double)? {
         guard let lg = league else { return nil }
         let teamsToProcess: [TeamStanding] = {
@@ -403,11 +403,17 @@ struct OffStatExpandedView: View {
 
     // seasonAvg is computed as average of the authoritative weekly totals (non-zero completed weeks)
     private var seasonAvg: Double {
+        // FIX: Prefer authoritative stored average when present to match other views and persisted data.
+        // Many parts of the app and persisted imports use TeamStanding.averageOffensivePPW as the canonical value.
+        // Use stored value first (keeps continuity), then all-time aggregate, then computed weekly average as fallback.
+        if let t = team, let stored = t.averageOffensivePPW, stored > 0 {
+            return stored
+        }
+        if let agg = aggregate { return agg.offensivePPW }
         if weeksPlayed > 0 {
             return sideWeeklyPointsNonZero.reduce(0, +) / Double(weeksPlayed)
         }
-        if let agg = aggregate { return agg.offensivePPW }
-        return team?.averageOffensivePPW ?? 0
+        return 0
     }
     private var formDelta: Double { last3Avg - seasonAvg }
     private var formDeltaColor: Color {
