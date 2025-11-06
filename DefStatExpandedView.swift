@@ -347,11 +347,18 @@ struct DefStatExpandedView: View {
 
     // seasonAvg (DPPW) computed from non-zero completed weeks, fallback to aggregates/team stored values
     private var seasonAvg: Double {
+        // Prefer canonical value from DSDStatsService which applies the same "exclude current week" rules.
+        if let t = team {
+            if let stored = DSDStatsService.shared.stat(for: t, type: .averageDefensivePPW, league: league, selectedSeason: appSelection.selectedSeason) as? Double {
+                if stored > 0 { return stored }
+            }
+        }
+        if let agg = aggregate { return agg.defensivePPW }
+        // Fallback: computed average from authoritative weekly totals (non-zero completed weeks)
         if weeksPlayed > 0 {
             return sideWeeklyPointsNonZero.reduce(0, +) / Double(weeksPlayed)
         }
-        if let agg = aggregate { return agg.defensivePPW }
-        return team?.averageDefensivePPW ?? 0
+        return 0
     }
     private var formDelta: Double { last3Avg - seasonAvg }
     private var formDeltaColor: Color {
@@ -364,19 +371,36 @@ struct DefStatExpandedView: View {
 
     // Recompute DPF from the exact same weekly totals used to compute DPPW.
     private var sidePointsComputed: Double {
+        // Prefer canonical DPF from DSDStatsService if available (ensures same logic everywhere).
+        if let t = team {
+            if let val = DSDStatsService.shared.stat(for: t, type: .defensivePointsFor, league: league, selectedSeason: appSelection.selectedSeason) as? Double {
+                if val > 0 { return val }
+            }
+        }
+        // Fallback to stacked weekly totals computed here (authoritative week mapping)
         let sum = stackedBarWeekData.map { $0.total }.reduce(0, +)
         if sum > 0 { return sum }
         if let agg = aggregate { return agg.totalDefensivePointsFor }
         return team?.defensivePointsFor ?? 0
     }
 
-    // Expose sidePoints (prefer aggregate in All Time)
+    // Expose sidePoints (prefer aggregate in All Time, then canonical team stat via DSDStatsService)
     private var sidePoints: Double {
         if let agg = aggregate { return agg.totalDefensivePointsFor }
+        if let t = team {
+            if let val = DSDStatsService.shared.stat(for: t, type: .defensivePointsFor, league: league, selectedSeason: appSelection.selectedSeason) as? Double {
+                return val
+            }
+        }
         return sidePointsComputed
     }
     private var sideMaxPoints: Double {
         if let agg = aggregate { return agg.totalMaxDefensivePointsFor }
+        if let t = team {
+            if let val = DSDStatsService.shared.stat(for: t, type: .maxDefensivePointsFor, league: league, selectedSeason: appSelection.selectedSeason) as? Double {
+                return val
+            }
+        }
         return team?.maxDefensivePointsFor ?? 0
     }
     private var managementPercent: Double {
@@ -862,7 +886,7 @@ struct DefStatExpandedView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // Small components (consistent with OffStat/TeamStat)
+    // Small components (copied/consistent with TeamStat)
 
     private struct ConsistencyMeter: View {
         let stdDev: Double
@@ -1112,7 +1136,7 @@ struct DefStatExpandedView: View {
         return candidates.contains(where: { normalizedAllowed.contains($0) })
     }
 
-    // Small components (copied/consistent with TeamStatExpandedView)
+    // Small components (copied/consistent with TeamStat)
     private struct EfficiencyBar: View {
         let ratio: Double
         let height: CGFloat
