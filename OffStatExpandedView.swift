@@ -10,7 +10,8 @@
 //  each TeamGradeComponents instance is populated with offensive values as required.
 //  PATCH: Use SleeperLeagueManager player cache to include started-then-dropped players when computing weekly totals.
 //  NEW: Add ManagementPill to lineupEfficiency to mirror TeamStatExpandedView but show offense-only Mgmt%.
-//
+//  FIX: Avoid counting full players_points (bench + starters) when matchup.players_points exists but starters list is missing.
+//       Instead attempt to reconstruct likely starters from roster.weeklyScores and only fall back to players_points if reconstruction fails.
 
 import SwiftUI
 
@@ -209,7 +210,38 @@ struct OffStatExpandedView: View {
                         }
                         return map
                     } else {
-                        return playersPoints.mapValues { $0 }
+                        // IMPORTANT PATCH:
+                        // When players_points exists but starters list is missing, do NOT blindly return all players_points
+                        // (bench + starters). That overcounts OPF. Instead, attempt to reconstruct a roster-based map
+                        // for this week (prefer matchup_id matches) and return that. Fallback to players_points only if
+                        // reconstruction fails (to preserve data when we truly have nothing else).
+                        var reconstructed: [String: Double] = [:]
+                        // Attempt to pick the matchup_id to prefer matching weeklyScores entries
+                        let preferredMid = myEntry.matchup_id
+                        for player in team.roster {
+                            let scores = player.weeklyScores.filter { $0.week == week }
+                            if scores.isEmpty { continue }
+                            // prefer the one that matches the matchup_id if present
+                            if let matched = scores.first(where: { $0.matchup_id == preferredMid }) {
+                                reconstructed[player.id] = matched.points_half_ppr ?? matched.points
+                            } else if let best = scores.max(by: { ($0.points_half_ppr ?? $0.points) < ($1.points_half_ppr ?? $1.points) }) {
+                                reconstructed[player.id] = best.points_half_ppr ?? best.points
+                            }
+                        }
+#if DEBUG
+                        // Debug: compare totals so developer can inspect weeks where players_points > reconstructed
+                        let playersPointsTotal = playersPoints.values.reduce(0.0, +)
+                        let reconstructedTotal = reconstructed.values.reduce(0.0, +)
+                        if playersPointsTotal != reconstructedTotal {
+                            print("[DEBUG][OffStatExpandedView] week \(week) players_points total = \(playersPointsTotal), reconstructed roster total = \(reconstructedTotal) (team: \(team.name))")
+                        }
+#endif
+                        if !reconstructed.isEmpty {
+                            return reconstructed
+                        } else {
+                            // as a last resort return playersPoints (preserve information)
+                            return playersPoints.mapValues { $0 }
+                        }
                     }
                 }
             }
@@ -382,7 +414,7 @@ struct OffStatExpandedView: View {
         return nil
     }
 
-    // New helpers to compute a week's optimal (max) points from roster + lineup config (offense)
+    // New helpers to compute a week's optimal (max) points for offense (mirrors other views)
     private func inferredLineupConfig(from roster: [Player]) -> [String: Int] {
         var counts: [String:Int] = [:]
         for p in roster {
