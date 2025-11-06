@@ -30,8 +30,7 @@ struct OffStatExpandedView: View {
     @State private var showConsistencyInfo = false
     // Removed showEfficiencyInfo per request (info icon + popup removed)
 
-    // NEW: sheet for offensive per-position balance detail
-    @State private var showOffBalanceDetail = false
+    // Note: showOffBalanceDetail and its sheet were removed — the UI now relies on the inline gauges only.
 
     // Offensive positions
     private let offPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
@@ -379,7 +378,7 @@ struct OffStatExpandedView: View {
 
     // Helper: check if a PlayerWeeklyScore's player matches the target normalized position
     private func matchesNormalizedPosition(_ score: PlayerWeeklyScore, pos: String) -> Bool {
-        guard let team = team else { return false }
+        guard let team else { return false }
         if let player = team.roster.first(where: { $0.id == score.player_id }) {
             return PositionNormalizer.normalize(player.position) == PositionNormalizer.normalize(pos)
         }
@@ -815,23 +814,7 @@ struct OffStatExpandedView: View {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
                 .presentationDetents([PresentationDetent.fraction(0.40)])
         }
-        // Ensure the OffPositionBalanceDetailSheet is provided with a complete mapping (QB,RB,WR,TE,K)
-        .sheet(isPresented: $showOffBalanceDetail) {
-            // Normalize and ensure all expected positions exist (defensive keys ignored here)
-            let sanitized: [String: Double] = {
-                var map = positionMgmtPercents
-                for key in offPositions {
-                    if map[key] == nil { map[key] = 0.0 }
-                }
-                return map
-            }()
-            OffPositionBalanceDetailSheet(
-                positionPercents: sanitized,
-                balancePercent: positionBalancePercent,
-                tagline: generatePositionBalanceTagline()
-            )
-            .presentationDetents([PresentationDetent.fraction(0.48)])
-        }
+        // NOTE: OffPositionBalanceDetailSheet removed. If you delete that file, nothing else in this view needs to be moved.
     }
 
     private func sectionHeader(_ text: String) -> some View {
@@ -946,7 +929,7 @@ struct OffStatExpandedView: View {
                         .frame(maxWidth: 180)
                 }
                 .onTapGesture {
-                    withAnimation { showOffBalanceDetail = true }
+                    // Detail sheet removed — no action. If you want a simple popup later, reintroduce a sheet or call the BalanceDetailSheet from TeamStatExpandedView.
                 }
                 .frame(maxWidth: .infinity)
 
