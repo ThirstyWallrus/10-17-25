@@ -4,19 +4,6 @@
 //
 //  Created by Dynasty Stat Drop on 8/25/25.
 //
-//  Updated to use authoritative matchup.players_points when available and
-//  to sum only starters' points when starters are present (to match MatchupView).
-//  Adjusted stat bubble row to fit inside the card and removed MPF bubble.
-//
-//  FIX: Correct PPW (seasonAvg) calculation — previously averaged across weeks
-//  that included future/incomplete weeks (zeros), yielding an artificially low
-//  average. Now we compute averages only across weeks with actual data (non-zero),
-//  and fall back to aggregated all-time or stored team.teamPointsPerWeek when no
-//  completed weeks are present. Last-3 average likewise uses the most recent
-//  non-empty weeks.
-//
-//  NOTE: Restored PPW responsive font behavior — the PPW value will shrink to fit
-//  inside the bubble if the PPW value is wide. This uses minimumScaleFactor + lineLimit(1).
 //
 
 import SwiftUI
@@ -974,22 +961,7 @@ struct TeamStatExpandedView: View {
             }
             .frame(height: 60)
             
-            // Existing EfficiencyBar remains (visual progress of overall mgmt%)
-            EfficiencyBar(ratio: managementPercent / 100.0, height: 12)
-                .frame(height: 12)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    HStack {
-                        Spacer()
-                        // Keep the info button action consistent with above
-                        Button { showEfficiencyInfo = true } label: {
-                            Image(systemName: "info.circle")
-                                .foregroundColor(.white.opacity(0.75))
-                                .font(.caption)
-                        }
-                        .padding(.trailing, 4)
-                    }
-                )
+            // NOTE: The lower EfficiencyBar was intentionally removed per request since ManagementPill is now shown above.
         }
         .onChange(of: offenseMgmtPercent) { _ in /* animate or react if needed */ }
         .onChange(of: defenseMgmtPercent) { _ in /* animate or react if needed */ }
