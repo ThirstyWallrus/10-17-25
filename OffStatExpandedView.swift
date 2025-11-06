@@ -11,7 +11,14 @@
 //  PATCH: Use SleeperLeagueManager player cache to include started-then-dropped players when computing weekly totals.
 //  NEW: Add ManagementPill to lineupEfficiency to mirror TeamStatExpandedView but show offense-only Mgmt%.
 //  FIX: Avoid counting full players_points (bench + starters) when matchup.players_points exists but starters list is missing.
-//       Instead attempt to reconstruct likely starters from roster.weeklyScores and only fall back to players_points if reconstruction fails.
+//       Instead attempt to reconstruct likely starters from players_points + eligible slot logic (greedy) first,
+//       then from roster.weeklyScores, and only fall back to returning players_points when reconstruction fails.
+//
+//  NOTE: This file replaces the previous approach which sometimes returned the entire players_points map
+//  (bench + starters) when starters were not present in the matchup entry. That over-counted OPF in many
+//  leagues. The new logic reconstructs starters greedily from players_points (works for traded/dropped starters),
+//  using roster/league caches to determine positions. This should correct the OPF mismatch you reported.
+//
 
 import SwiftUI
 
@@ -215,25 +222,78 @@ struct OffStatExpandedView: View {
                     } else {
                         // IMPORTANT PATCH:
                         // When players_points exists but starters list is missing, do NOT blindly return all players_points
-                        // (bench + starters). That overcounts OPF. Instead, attempt to reconstruct a roster-based map
-                        // for this week (prefer matchup_id matches) and return that. Fallback to players_points only if
-                        // reconstruction fails (to preserve data when we truly have nothing else).
-                        var reconstructed: [String: Double] = [:]
-                        // Attempt to pick the matchup_id to prefer matching weeklyScores entries
+                        // (bench + starters). That overcounts OPF. Instead:
+                        //  1) Attempt to reconstruct starters greedily using players_points with position resolution
+                        //     (this handles started-then-dropped players since players_points contains the actual starters' ids).
+                        //  2) If greedy reconstruction from players_points fails (e.g., cannot resolve eligible picks),
+                        //     fall back to reconstructing from roster.weeklyScores (legacy).
+                        //  3) Only if both reconstructions fail, return the raw playersPoints as last resort.
+                        //
+                        // Greedy reconstruction from players_points:
+                        struct Candidate {
+                            let playerId: String
+                            let basePos: String
+                            let fantasy: [String]
+                            let points: Double
+                        }
+
+                        var candidates: [Candidate] = []
+                        for (pid, pts) in playersPoints {
+                            var basePos = "UNK"
+                            var alt: [String] = []
+                            if let p = team.roster.first(where: { $0.id == pid }) {
+                                basePos = p.position
+                                alt = p.altPositions ?? []
+                            } else if let raw = leagueManager.playerCache?[pid] ?? leagueManager.allPlayers[pid] {
+                                // raw likely has `position` optional
+                                basePos = raw.position ?? "WR"
+                                // no altPositions in raw cache typically
+                            } else {
+                                // Unknown player — assume WR fallback to avoid dropping offensive points entirely
+                                basePos = "WR"
+                            }
+                            candidates.append(Candidate(playerId: pid, basePos: basePos, fantasy: alt, points: pts))
+                        }
+
+                        // Determine lineup slots for greedy assignment (infer if missing)
+                        let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
+                        let slots = expandSlots(lineupConfig: lineupConfig)
+                        var usedIds = Set<String>()
+                        var selected: [String: Double] = [:]
+
+                        if !slots.isEmpty && !candidates.isEmpty {
+                            // Greedy selection: for each slot pick highest-scoring eligible candidate not already used
+                            for slot in slots {
+                                let allowed = allowedPositions(for: slot)
+                                let pick = candidates
+                                    .filter { !usedIds.contains($0.playerId) && isEligible(basePos: $0.basePos, fantasy: $0.fantasy, allowed: allowed) }
+                                    .max(by: { $0.points < $1.points })
+                                if let p = pick {
+                                    usedIds.insert(p.playerId)
+                                    selected[p.playerId] = p.points
+                                }
+                            }
+                        }
+
+                        if !selected.isEmpty {
+                            return selected
+                        }
+
+                        // Fallback reconstruction using roster.weeklyScores (legacy behavior) — prefer matchup_id when available
+                        var reconstructedFromRoster: [String: Double] = [:]
                         let preferredMid = myEntry.matchup_id
                         for player in team.roster {
                             let scores = player.weeklyScores.filter { $0.week == week }
                             if scores.isEmpty { continue }
-                            // prefer the one that matches the matchup_id if present
                             if let matched = scores.first(where: { $0.matchup_id == preferredMid }) {
-                                reconstructed[player.id] = matched.points_half_ppr ?? matched.points
+                                reconstructedFromRoster[player.id] = matched.points_half_ppr ?? matched.points
                             } else if let best = scores.max(by: { ($0.points_half_ppr ?? $0.points) < ($1.points_half_ppr ?? $1.points) }) {
-                                reconstructed[player.id] = best.points_half_ppr ?? best.points
+                                reconstructedFromRoster[player.id] = best.points_half_ppr ?? best.points
                             }
                         }
 
-                        if !reconstructed.isEmpty {
-                            return reconstructed
+                        if !reconstructedFromRoster.isEmpty {
+                            return reconstructedFromRoster
                         } else {
                             // as a last resort return playersPoints (preserve information)
                             return playersPoints.mapValues { $0 }
