@@ -33,9 +33,6 @@ struct OffStatExpandedView: View {
     // NEW: sheet for offensive per-position balance detail
     @State private var showOffBalanceDetail = false
 
-    // NEW: Huddle tips toggle
-    @State private var showTips: Bool = false
-
     // Offensive positions
     private let offPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
 
@@ -51,26 +48,6 @@ struct OffStatExpandedView: View {
             "LB": .purple,
             "DB": .pink
         ]
-    }
-
-    // =========================
-    // Huddle / UI Helper Types
-    // =========================
-
-    /// Lightweight position struct used by the Huddle view.
-    private struct PositionData: Identifiable {
-        let id = UUID()
-        let name: String
-        let icon: String // SF Symbol
-        let percentage: Double
-
-        var emoji: String {
-            OffStatExpandedView.getEmoji(for: percentage)
-        }
-
-        var tipText: String {
-            OffStatExpandedView.getTip(for: name, percentage: percentage, emoji: emoji)
-        }
     }
 
     // MARK: - Team/League/Season State
@@ -426,7 +403,7 @@ struct OffStatExpandedView: View {
 
     // seasonAvg is computed as average of the authoritative weekly totals (non-zero completed weeks)
     private var seasonAvg: Double {
-        // FIX: Prefer authoritative stored average when present to match other views and persisted values.
+        // FIX: Prefer authoritative stored average when present to match other views and persisted data.
         // Many parts of the app and persisted imports use TeamStanding.averageOffensivePPW as the canonical value.
         // Use stored value first (keeps continuity), then all-time aggregate, then computed weekly average as fallback.
         if let t = team, let stored = t.averageOffensivePPW, stored > 0 {
@@ -807,14 +784,6 @@ struct OffStatExpandedView: View {
             sectionHeader("Offensive Efficiency Spotlight")
             offensiveEfficiencySpotlight
 
-            // =========================================
-            // Huddle visualization (non-disruptive, fixed frame)
-            // Inserted under Offensive Efficiency Spotlight
-            // =========================================
-            huddleView
-                .frame(maxWidth: .infinity)
-                .padding(.top, 6)
-
             sectionHeader("Recent Form")
             recentForm
             if let team = team, let league = league {
@@ -843,199 +812,7 @@ struct OffStatExpandedView: View {
             )
             .presentationDetents([PresentationDetent.fraction(0.48)])
         }
-        // Huddle tips dialog
-        .confirmationDialog("Huddle Tips", isPresented: $showTips) {
-            ForEach(huddlePositions) { pos in
-                Button(pos.name) { /* no-op; just a selector in dialog */ }
-            }
-        } message: {
-            Text(huddleDialogMessage)
-        }
     }
-
-    // MARK: - Huddle View & Helpers
-
-    // Compute an array of PositionData used by the Huddle view
-    private var huddlePositions: [PositionData] {
-        // Use ordered positions to keep angles consistent
-        let order = ["QB","RB","WR","TE","K"]
-        let mgmts = positionMgmtPercents
-        return order.map { pos in
-            PositionData(
-                name: pos,
-                icon: iconForPosition(pos),
-                percentage: mgmts[pos] ?? 0.0
-            )
-        }
-    }
-
-    // Dialog message assembled once
-    private var huddleDialogMessage: String {
-        var s = getSkewText(positions: huddlePositions, balance: positionBalancePercent)
-        for p in huddlePositions {
-            s += "\n\n\(p.emoji) \(p.tipText)"
-        }
-        return s
-    }
-
-    // Simple SF Symbol mapping for positions (customize as desired)
-    private func iconForPosition(_ pos: String) -> String {
-        switch pos {
-        case "QB": return "person.fill"
-        case "RB": return "figure.walk"
-        case "WR": return "wave.3.forward.circle"
-        case "TE": return "shield.lefthalf.fill"
-        case "K":  return "soccerball"
-        default: return "circle.fill"
-        }
-    }
-
-    // The huddle visual (non-disruptive, fixed-size ZStack)
-    @ViewBuilder
-    private var huddleView: some View {
-        // If no positions available, show placeholder
-        if huddlePositions.isEmpty {
-            Text("No position data available")
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.7))
-                .frame(height: 160)
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.2)))
-        } else {
-            // balancePercentage uses existing computed positionBalancePercent
-            let balancePct = positionBalancePercent
-            ZStack {
-                // Outer ring (distorted based on balance)
-                Circle()
-                    .fill(LinearGradient(colors: [Color.green.opacity(0.18), Color.yellow.opacity(0.12), Color.red.opacity(0.06)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 250, height: 250)
-                    .scaleEffect(x: 1 + distortionFactor(balance: balancePct), y: 1 - distortionFactor(balance: balancePct))
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                            .scaleEffect(x: 1 + distortionFactor(balance: balancePct), y: 1 - distortionFactor(balance: balancePct))
-                    )
-
-                // Central "football" gauge (capsule with percent fill)
-                Capsule()
-                    .fill(Color.brown)
-                    .frame(width: 80, height: 40)
-                    .overlay(
-                        GeometryReader { geo in
-                            Capsule()
-                                .fill(Color.green.opacity(0.55))
-                                .frame(width: max(0, geo.size.width * CGFloat(min(max(1 - (balancePct/100.0), 0.0), 1.0))), height: geo.size.height)
-                                .alignmentGuide(.leading) { d in 0 }
-                        }
-                        .clipped()
-                    )
-                    .overlay(Text(String(format: "%.2f%%", balancePct)).foregroundColor(.white).font(.caption).bold())
-                    .shadow(radius: 6)
-
-                // Position icons and emojis around the ring
-                ForEach(Array(huddlePositions.enumerated()), id: \.1.id) { idx, pos in
-                    let angle = Double(idx) * (360.0 / Double(huddlePositions.count))
-                    let point = calculatePosition(angle: angle, radius: 110)
-                    HStack(spacing: 6) {
-                        Image(systemName: pos.icon)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 26, height: 26)
-                            .foregroundColor(Color.white.opacity(0.9))
-                        Text(pos.emoji)
-                            .font(.title3)
-                    }
-                    .position(x: point.x, y: point.y)
-                    .accessibilityLabel("\(pos.name) \(String(format: "%.0f", pos.percentage)) percent")
-                }
-
-                // Skew arrows: solid for high positions, dashed for low positions
-                ForEach(highPositions(), id: \.id) { pos in
-                    let angle = positionAngle(for: pos)
-                    Path { path in
-                        path.move(to: CGPoint(x: 140, y: 140))
-                        path.addLine(to: calculatePosition(angle: angle, radius: 110))
-                    }
-                    .stroke(Color.yellow.opacity(0.9), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                }
-                ForEach(lowPositions(), id: \.id) { pos in
-                    let angle = positionAngle(for: pos)
-                    Path { path in
-                        path.move(to: CGPoint(x: 140, y: 140))
-                        path.addLine(to: calculatePosition(angle: angle, radius: 110))
-                    }
-                    .stroke(Color.red.opacity(0.85), style: StrokeStyle(lineWidth: 2, dash: [6]))
-                }
-
-            }
-            .frame(width: 280, height: 280)
-            .accessibilityLabel("Huddle Harmony: Balance \(String(format: "%.2f", positionBalancePercent)) percent. Tap for tips.")
-            .onTapGesture {
-                showTips.toggle()
-            }
-        }
-    }
-
-    // MARK: Huddle helper functions (static helpers used by PositionData)
-    private static func getEmoji(for percentage: Double) -> String {
-        if percentage > 85.0 { return "🏆" }
-        else if percentage >= 75.0 { return "🔥" }
-        else if percentage >= 65.0 { return "☀️" }
-        else if percentage >= 50.0 { return "❄️" }
-        else { return "⚠️" }
-    }
-
-    private static func getTip(for name: String, percentage: Double, emoji: String) -> String {
-        switch emoji {
-        case "🏆": return "\(name) Elite at \(String(format: "%.2f", percentage))%: Trophy-worthy—protect with backups."
-        case "🔥": return "\(name) On Fire at \(String(format: "%.2f", percentage))%: Heating up—sustain to hit elite."
-        case "☀️": return "\(name) Warming at \(String(format: "%.2f", percentage))%: Solid; brighten with tweaks."
-        case "❄️": return "\(name) Cooling at \(String(format: "%.2f", percentage))%: Frosty—warm up matchups."
-        case "⚠️": return "\(name) Alert at \(String(format: "%.2f", percentage))%: Urgent fix; scout waivers."
-        default: return "\(name) at \(String(format: "%.2f", percentage))%."
-        }
-    }
-
-    private func getSkewText(positions: [PositionData], balance: Double) -> String {
-        let highs = positions.filter { $0.percentage > 75.0 }.map { $0.name }.joined(separator: "/")
-        let lows = positions.filter { $0.percentage < 50.0 }.map { $0.name }.joined(separator: "/")
-        if highs.isEmpty && lows.isEmpty {
-            return "Huddle balanced — usage evenly distributed."
-        }
-        return "Huddle Skewed to \(highs.isEmpty ? "No particular" : highs) — Watch \(lows.isEmpty ? "no underdog" : lows)!"
-    }
-
-    // Distortion factor for the ring (low balance -> more distortion)
-    private func distortionFactor(balance: Double) -> CGFloat {
-        // clamp balance to 0..100
-        let b = max(0.0, min(100.0, balance))
-        return CGFloat(0.3 * (1.0 - b / 100.0)) // 0..0.3
-    }
-
-    private func calculatePosition(angle: Double, radius: Double) -> CGPoint {
-        let rad = angle * .pi / 180
-        // center at (140,140) within 280 frame
-        return CGPoint(x: 140 + radius * cos(rad), y: 140 + radius * sin(rad))
-    }
-
-    private func highPositions() -> [PositionData] {
-        huddlePositions.filter { Self.getEmoji(for: $0.percentage) == "🏆" || Self.getEmoji(for: $0.percentage) == "🔥" }
-    }
-
-    private func lowPositions() -> [PositionData] {
-        huddlePositions.filter { Self.getEmoji(for: $0.percentage) == "❄️" || Self.getEmoji(for: $0.percentage) == "⚠️" }
-    }
-
-    private func positionAngle(for pos: PositionData) -> Double {
-        if let index = huddlePositions.firstIndex(where: { $0.id == pos.id }) {
-            return Double(index) * (360.0 / Double(huddlePositions.count))
-        }
-        return 0
-    }
-
-    // =========================
-    // Remaining existing code
-    // =========================
 
     private func sectionHeader(_ text: String) -> some View {
         Text(text)
@@ -1398,5 +1175,76 @@ struct OffStatExpandedView: View {
         case let x where x >= 60: return .yellow
         default: return .red
         }
+    }
+}
+
+// MARK: - Offense Position Balance Detail Sheet
+private struct OffPositionBalanceDetailSheet: View {
+    let positionPercents: [String: Double]
+    let balancePercent: Double
+    let tagline: String
+
+    // Sort positions so we always show QB, RB, WR, TE, K in that order
+    private var orderedPositions: [String] { ["QB","RB","WR","TE","K"] }
+
+    // For consistent color mapping use same token as OffStatExpandedView
+    private var positionColors: [String: Color] {
+        [
+            "QB": .red,
+            "RB": .green,
+            "WR": .blue,
+            "TE": .yellow,
+            "K": Color.purple
+        ]
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Capsule().fill(Color.white.opacity(0.15)).frame(width: 40, height: 6).padding(.top, 8)
+            Text("Offensive Balance — Position Breakdown")
+                .font(.headline)
+                .foregroundColor(.yellow)
+
+            VStack(spacing: 10) {
+                ForEach(orderedPositions, id: \.self) { pos in
+                    let pct = positionPercents[pos] ?? 0
+                    HStack(spacing: 12) {
+                        Text(pos)
+                            .font(.subheadline).bold()
+                            .frame(width: 48, alignment: .leading)
+                            .foregroundColor(.white)
+                        ProgressView(value: min(max(pct / 100.0, 0.0), 1.0))
+                            .progressViewStyle(LinearProgressViewStyle(tint: positionColors[pos] ?? .white))
+                            .frame(height: 10)
+                        Text(String(format: "%.2f%%", pct))
+                            .font(.caption2).bold()
+                            .foregroundColor(.white.opacity(0.9))
+                            .frame(width: 64, alignment: .trailing)
+                    }
+                }
+            }
+            .padding(.horizontal)
+
+            HStack {
+                Text("⚖️ Balance")
+                    .font(.subheadline).bold()
+                    .foregroundColor(.white)
+                Spacer()
+                Text(String(format: "%.2f%% Variation", balancePercent))
+                    .font(.subheadline).bold()
+                    .foregroundColor(balancePercent < 8 ? .green : (balancePercent < 16 ? .yellow : .red))
+            }
+            .padding(.horizontal)
+
+            Text(tagline)
+                .font(.caption2)
+                .foregroundColor(.yellow)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            Spacer(minLength: 8)
+        }
+        .padding(.bottom, 12)
+        .background(Color.black)
     }
 }
