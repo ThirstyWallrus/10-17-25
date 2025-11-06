@@ -802,7 +802,7 @@ struct OffStatExpandedView: View {
         .padding(.bottom, 12)
         .sheet(isPresented: $showConsistencyInfo) {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
-                .presentationDetents([.fraction(0.40)])
+                .presentationDetents([PresentationDetent.fraction(0.40)])
         }
         .sheet(isPresented: $showOffBalanceDetail) {
             OffPositionBalanceDetailSheet(
@@ -810,7 +810,7 @@ struct OffStatExpandedView: View {
                 balancePercent: positionBalancePercent,
                 tagline: generatePositionBalanceTagline()
             )
-            .presentationDetents([.fraction(0.48)])
+            .presentationDetents([PresentationDetent.fraction(0.48)])
         }
     }
 

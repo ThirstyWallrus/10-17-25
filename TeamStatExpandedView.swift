@@ -793,13 +793,13 @@ struct TeamStatExpandedView: View {
         .padding(.bottom, 12)
         .sheet(isPresented: $showConsistencyInfo) {
             ConsistencyInfoSheet(stdDev: stdDev, descriptor: consistencyDescriptor)
-                .presentationDetents([.fraction(0.40)])
+                .presentationDetents([PresentationDetent.fraction(0.40)])
         }
         .sheet(isPresented: $showEfficiencyInfo) {
             EfficiencyInfoSheet(managementPercent: managementPercent,
                                 pointsFor: team?.pointsFor ?? 0,
                                 maxPointsFor: team?.maxPointsFor ?? 0)
-            .presentationDetents([.fraction(0.35)])
+            .presentationDetents([PresentationDetent.fraction(0.35)])
         }
         .sheet(isPresented: $showBalanceDetail) {
             BalanceDetailSheet(
@@ -808,7 +808,7 @@ struct TeamStatExpandedView: View {
                 balancePct: balancePercent,
                 tagline: generateBalanceTagline(off: offenseMgmtPercent, def: defenseMgmtPercent, balance: balancePercent)
             )
-            .presentationDetents([.fraction(0.40)])
+            .presentationDetents([PresentationDetent.fraction(0.40)])
         }
     }
     
