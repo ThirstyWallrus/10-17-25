@@ -7,9 +7,6 @@
 
 import Foundation
 
-// --- PATCH: Import PositionNormalizer and SlotPositionAssigner ---
-import Foundation
-
 @MainActor
 final class DSDStatsService {
     static let shared = DSDStatsService()
@@ -140,6 +137,26 @@ final class DSDStatsService {
                     Double(stats.totalTradesCompleted) / Double(stats.seasonsIncluded.count)
             }
             return 0.0
+        case .playoffPointsFor:
+            return nil
+        case .playoffPPW:
+            return nil
+        case .playoffManagementPercent:
+            return nil
+        case .playoffOffensivePointsFor:
+            return nil
+        case .playoffOffensivePPW:
+            return nil
+        case .playoffOffensiveManagementPercent:
+            return nil
+        case .playoffDefensivePointsFor:
+            return nil
+        case .playoffDefensivePPW:
+            return nil
+        case .playoffDefensiveManagementPercent:
+            return nil
+        case .playoffRecordAllTime:
+            return nil
         }
     }
     
@@ -200,8 +217,238 @@ final class DSDStatsService {
         return validWeeks.isEmpty ? 0 : pf / Double(validWeeks.count)
     }
     
-    // --- Existing helpers below ---
-
+    // --- New: Per-position helpers (season + all-time) ---
+    //
+    // Overview:
+    // - These helpers compute Points For, Max Points For, and Management% for a specific position.
+    // - They support both season-level computation (TeamStanding + LeagueData + SleeperLeagueManager)
+    //   and all-time aggregated data (AggregatedOwnerStats).
+    // - For season computations we prefer matchup.players_points when available and fall back to roster.weeklyScores.
+    // - For started-then-dropped players we resolve positions via the provided SleeperLeagueManager when available.
+    //
+    // Public API:
+    // - pointsForPosition(team:position:league:selectedSeason:leagueManager:)
+    // - maxPointsForPosition(team:position:league:selectedSeason:leagueManager:)
+    // - managementPercentForPosition(team:position:league:selectedSeason:leagueManager:)
+    // - pointsForPosition(allTimeAgg:position:)
+    // - maxPointsForPosition(allTimeAgg:position:)  (approximation using actual starter counts + per-start averages)
+    // - managementPercentForPosition(allTimeAgg:position:)
+    
+    // Season: sum of points credited to players of `position` across valid weeks.
+    func pointsForPosition(
+        team: TeamStanding,
+        position: String,
+        league: LeagueData?,
+        selectedSeason: String? = nil,
+        leagueManager: SleeperLeagueManager? = nil
+    ) -> Double {
+        let normPos = PositionNormalizer.normalize(position)
+        guard let league = league else {
+            // No league -> best-effort sum from roster weeklyScores
+            return team.roster
+                .filter { PositionNormalizer.normalize($0.position) == normPos }
+                .flatMap { $0.weeklyScores }
+                .map { $0.points_half_ppr ?? $0.points }
+                .reduce(0, +)
+        }
+        let seasonId = selectedSeason ?? league.season
+        guard let season = league.seasons.first(where: { $0.id == seasonId }) else {
+            return 0
+        }
+        let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
+        let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
+        var total: Double = 0.0
+        
+        for wk in validWeeks {
+            // Prefer matchup players_points if present
+            if let entries = season.matchupsByWeek?[wk],
+               let rosterIdInt = Int(team.id),
+               let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
+               let playersPoints = myEntry.players_points,
+               !playersPoints.isEmpty {
+                // If starters exist, sum only starters (explicit starters -> authoritative)
+                if let starters = myEntry.starters, !starters.isEmpty {
+                    for pid in starters {
+                        guard let pts = playersPoints[pid] else { continue }
+                        // Resolve position: roster first, then leagueManager caches
+                        if let player = team.roster.first(where: { $0.id == pid }) {
+                            if PositionNormalizer.normalize(player.position) == normPos {
+                                total += pts
+                            }
+                        } else if let lm = leagueManager, let raw = lm.playerCache?[pid] ?? lm.allPlayers[pid] {
+                            if PositionNormalizer.normalize(raw.position ?? "UNK") == normPos {
+                                total += pts
+                            }
+                        } else {
+                            // Conservative: skip unresolved players (to avoid misattribution)
+                            continue
+                        }
+                    }
+                } else {
+                    // No starters list: include any players_points whose resolved position matches
+                    for (pid, pts) in playersPoints {
+                        if let player = team.roster.first(where: { $0.id == pid }) {
+                            if PositionNormalizer.normalize(player.position) == normPos {
+                                total += pts
+                            }
+                        } else if let lm = leagueManager, let raw = lm.playerCache?[pid] ?? lm.allPlayers[pid] {
+                            if PositionNormalizer.normalize(raw.position ?? "UNK") == normPos {
+                                total += pts
+                            }
+                        } else {
+                            continue
+                        }
+                    }
+                }
+            } else {
+                // Fallback: use roster.weeklyScores for matching position players
+                for player in team.roster where PositionNormalizer.normalize(player.position) == normPos {
+                    if let score = player.weeklyScores.first(where: { $0.week == wk }) {
+                        total += (score.points_half_ppr ?? score.points)
+                    }
+                }
+            }
+        }
+        return total
+    }
+    
+    // Season: compute max points for a position by greedy week-by-week selection
+    func maxPointsForPosition(
+        team: TeamStanding,
+        position: String,
+        league: LeagueData?,
+        selectedSeason: String? = nil,
+        leagueManager: SleeperLeagueManager? = nil
+    ) -> Double {
+        let normPos = PositionNormalizer.normalize(position)
+        guard let league = league else {
+            // Fallback: infer lineup slots from roster and sum the top N players per week from roster only
+            let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
+            let slots = expandSlots(lineupConfig: lineupConfig)
+            let slotCount = slots.filter {
+                SlotPositionAssigner.countedPosition(for: $0, candidatePositions: [position], base: position) == normPos
+            }.count
+            guard slotCount > 0 else { return 0 }
+            // collect all weeks in roster weekly scores
+            let allWeeks = Array(Set(team.roster.flatMap { $0.weeklyScores.map { $0.week } })).sorted()
+            var sum: Double = 0
+            for wk in allWeeks {
+                var candidates: [Double] = []
+                for p in team.roster where PositionNormalizer.normalize(p.position) == normPos {
+                    if let s = p.weeklyScores.first(where: { $0.week == wk }) {
+                        candidates.append(s.points_half_ppr ?? s.points)
+                    }
+                }
+                candidates.sort(by: >)
+                sum += candidates.prefix(slotCount).reduce(0, +)
+            }
+            return sum
+        }
+        let seasonId = selectedSeason ?? league.season
+        guard let season = league.seasons.first(where: { $0.id == seasonId }) else { return 0 }
+        let currentWeek = (league.seasons.sorted { $0.id < $1.id }.last?.matchupsByWeek?.keys.max() ?? 18) + 1
+        let validWeeks = validWeeksForSeason(season, currentWeek: currentWeek)
+        
+        let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
+        let slots = expandSlots(lineupConfig: lineupConfig)
+        let slotCount = slots.filter {
+            SlotPositionAssigner.countedPosition(for: $0, candidatePositions: [position], base: position) == normPos
+        }.count
+        guard slotCount > 0 else { return 0 }
+        
+        var totalMax: Double = 0.0
+        
+        for wk in validWeeks {
+            // build authoritative player -> pts map for the week
+            var playerPoints: [String: Double] = [:]
+            if let entries = season.matchupsByWeek?[wk],
+               let rosterIdInt = Int(team.id),
+               let myEntry = entries.first(where: { $0.roster_id == rosterIdInt }),
+               let playersPoints = myEntry.players_points, !playersPoints.isEmpty {
+                // use players_points (may contain started-then-dropped)
+                playerPoints = playersPoints
+            } else {
+                // fallback: dedup roster.weeklyScores
+                for player in team.roster {
+                    let scores = player.weeklyScores.filter { $0.week == wk }
+                    if scores.isEmpty { continue }
+                    if let best = scores.max(by: { ($0.points_half_ppr ?? $0.points) < ($1.points_half_ppr ?? $1.points) }) {
+                        playerPoints[player.id] = (best.points_half_ppr ?? best.points)
+                    }
+                }
+            }
+            
+            // collect candidates that resolve to this position (use roster resolution first, then leagueManager)
+            var candidates: [Double] = []
+            for (pid, pts) in playerPoints {
+                if let player = team.roster.first(where: { $0.id == pid }) {
+                    if PositionNormalizer.normalize(player.position) == normPos {
+                        candidates.append(pts)
+                    }
+                } else if let lm = leagueManager, let raw = lm.playerCache?[pid] ?? lm.allPlayers[pid] {
+                    if PositionNormalizer.normalize(raw.position ?? "UNK") == normPos {
+                        candidates.append(pts)
+                    }
+                } else {
+                    // unresolved started/dropped player -> conservative: skip (avoid mis-crediting)
+                    continue
+                }
+            }
+            candidates.sort(by: >)
+            totalMax += candidates.prefix(slotCount).reduce(0, +)
+        }
+        return totalMax
+    }
+    
+    func managementPercentForPosition(
+        team: TeamStanding,
+        position: String,
+        league: LeagueData?,
+        selectedSeason: String? = nil,
+        leagueManager: SleeperLeagueManager? = nil
+    ) -> Double {
+        let pf = pointsForPosition(team: team, position: position, league: league, selectedSeason: selectedSeason, leagueManager: leagueManager)
+        let maxPF = maxPointsForPosition(team: team, position: position, league: league, selectedSeason: selectedSeason, leagueManager: leagueManager)
+        return maxPF > 0 ? (pf / maxPF) * 100.0 : 0.0
+    }
+    
+    // --- All-time (AggregatedOwnerStats) helpers ---
+    // Note: AggregatedOwnerStats currently includes totals and per-position averages/totals.
+    // We implement reasonable approximations for all-time "max points for per position" using
+    // actual starter counts totals and per-start averages. Documented as approximation.
+    
+    func pointsForPosition(allTimeAgg agg: AggregatedOwnerStats, position: String) -> Double {
+        let norm = PositionNormalizer.normalize(position)
+        return agg.positionTotals[norm] ?? 0.0
+    }
+    
+    /// Approximate all-time max points for a position.
+    /// Approach:
+    /// - Compute average starters-per-week for the position using actualStarterPositionCountsTotals / actualStarterWeeks (if present).
+    /// - Multiply average starters/week * agg.weeksPlayed * per-start average (individualPositionPPW if present, else positionAvgPPW).
+    /// This is an approximation (best-effort) and is documented.
+    func maxPointsForPosition(allTimeAgg agg: AggregatedOwnerStats, position: String) -> Double {
+        let norm = PositionNormalizer.normalize(position)
+        // average starters per week (actual starter capture)
+        let startersTotal = Double(agg.actualStarterPositionCountsTotals[norm] ?? 0)
+        let starterWeeks = Double(max(1, agg.actualStarterWeeks))
+        let avgStartersPerWeek = startersTotal / starterWeeks
+        // per-start average points
+        let perStart = agg.individualPositionPPW[norm] ?? agg.positionAvgPPW[norm] ?? 0.0
+        // total weeks included in aggregated record (weeksPlayed)
+        let weeks = Double(max(1, agg.weeksPlayed))
+        // approximate max = slots_per_week * weeks * per_start_avg
+        return avgStartersPerWeek * weeks * perStart
+    }
+    
+    func managementPercentForPosition(allTimeAgg agg: AggregatedOwnerStats, position: String) -> Double {
+        let pf = pointsForPosition(allTimeAgg: agg, position: position)
+        let maxPF = maxPointsForPosition(allTimeAgg: agg, position: position)
+        return maxPF > 0 ? (pf / maxPF) * 100.0 : 0.0
+    }
+    
+    // MARK: Existing helpers below (unchanged)
+    
     func stat(for agg: AggregatedOwnerStats, type: StatType) -> Any? {
         switch type {
         case .pointsFor: return agg.totalPointsFor
@@ -351,4 +598,21 @@ final class DSDStatsService {
     // MARK: PATCH: If any slot-to-position assignment is needed in future, use global helper
     // For continuity, ensure all new stat or lineup logic uses:
     // SlotPositionAssigner.countedPosition(for: slot, candidatePositions: fantasyPositions, base: basePosition)
+    
+    // MARK: - Local utilities used by per-position/all-time helpers
+    
+    // Infer a simple lineup config from roster (similar to other places in app).
+    private func inferredLineupConfig(from roster: [Player]) -> [String: Int] {
+        var counts: [String:Int] = [:]
+        for p in roster {
+            // Normalize position for starter slot assignment
+            let normalized = PositionNormalizer.normalize(p.position)
+            counts[normalized, default: 0] += 1
+        }
+        return counts.mapValues { min($0, 3) }
+    }
+
+    private func expandSlots(lineupConfig: [String:Int]) -> [String] {
+        lineupConfig.flatMap { Array(repeating: $0.key, count: $0.value) }
+    }
 }
