@@ -772,21 +772,10 @@ struct TeamStatExpandedView: View {
             lineupEfficiency
             sectionHeader("Recent Form")
             recentForm
-            if let team = team, let league = league {
-                StatDropAnalysisBox(
-                    team: team,
-                    league: league,
-                    context: .team,
-                    personality: .classicESPN
-                )
-            }
+
             sectionHeader("Consistency Score")
             consistencyRow
-            // Strengths / Weaknesses chips
-            sectionHeader("Strengths")
-            FlowLayoutCompat(items: strengths) { Pill(text: $0, bg: Color.green.opacity(0.22), stroke: .green) }
-            sectionHeader("Weaknesses")
-            FlowLayoutCompat(items: weaknesses) { Pill(text: $0, bg: Color.red.opacity(0.22), stroke: .red) }
+            // Strengths / Weaknesses sections removed per user request.
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
@@ -924,7 +913,6 @@ struct TeamStatExpandedView: View {
                         .frame(maxWidth: 220)
                 }
                 .onTapGesture {
-                    // Show detailed breakdown modal
                     showBalanceDetail = true
                 }
                 
@@ -933,7 +921,7 @@ struct TeamStatExpandedView: View {
                     Gauge(value: defenseMgmtPercent / 100.0) {
                         EmptyView()
                     } currentValueLabel: {
-                        Text(String(format: "%.2f%%", defenseMgmtPercent))
+                        Text(String(format: "%.2F%%", defenseMgmtPercent))
                             .font(.caption2).bold()
                             .foregroundColor(.white)
                     }
