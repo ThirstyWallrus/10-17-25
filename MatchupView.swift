@@ -54,6 +54,7 @@ private func duelDesignation(for slot: String) -> String? {
 struct MatchupView: View {
     @EnvironmentObject var leagueManager: SleeperLeagueManager
     @EnvironmentObject var appSelection: AppSelection
+    @EnvironmentObject var authViewModel: AuthViewModel
     @Binding var selectedTab: Tab
 
     // MARK: - Utility Models
@@ -454,12 +455,19 @@ struct MatchupView: View {
     // MARK: - Helper: Username Extraction
 
     private var userDisplayName: String {
-        // Prefer AuthViewModel username, fallback to team name
-        if let username = appSelection.selectedLeague?.name, !username.isEmpty {
-            return username
+        // Prefer the imported/persisted Sleeper username for the current DSD user (if present)
+        if let dsdUser = authViewModel.currentUsername,
+           let sleeper = UserDefaults.standard.string(forKey: "sleeperUsername_\(dsdUser)"),
+           !sleeper.isEmpty {
+            return sleeper
         }
+        // Next fallback: use the team name if available
         if let currentUsername = appSelection.selectedTeam?.name, !currentUsername.isEmpty {
             return currentUsername
+        }
+        // Fallback to league name (legacy behavior)
+        if let leagueName = appSelection.selectedLeague?.name, !leagueName.isEmpty {
+            return leagueName
         }
         return "Your"
     }
@@ -709,7 +717,7 @@ struct MatchupView: View {
 
     private func teamScoreBox(team: TeamDisplay?, accent: Color, isUser: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // PATCH: Show "[Username]'s Team" on left, "[Opponent's Username]'s Team" on right
+            // PATCH: Show "[SleeperUser]'s Team" on left, "[Opponent's Username]'s Team" on right
             if isUser {
                 Text("\(userDisplayName)'s Team")
                     .font(.headline.bold())
