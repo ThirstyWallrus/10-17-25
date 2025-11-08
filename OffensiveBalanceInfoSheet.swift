@@ -36,7 +36,14 @@ struct OffensiveBalanceInfoSheet: View {
     let positionPercents: [String: Double]
     // Precomputed balance percent (for display/highlighting) — we also recompute locally to show steps
     let balancePercent: Double
-
+    let tagline: String
+    
+    
+    init(positionPercents:[String: Double], balancedPercent: Double, tagline: String = "") {
+        self.positionPercents = positionPercents
+        self.balancePercent = balancePercent
+        self.tagline = tagline
+    }
     // Order and default labels
     private let orderedPositions: [String] = ["QB", "RB", "WR", "TE", "K"]
 
@@ -243,7 +250,7 @@ struct OffensiveBalanceInfoSheet_Previews: PreviewProvider {
     ]
 
     static var previews: some View {
-        OffensiveBalanceInfoSheet(positionPercents: sample, balancePercent: {
+        OffensiveBalanceInfoSheet(positionPercents: sample, balancedPercent: {
             // compute same CV-based balance for preview
             let vals = ["QB","RB","WR","TE","K"].map { sample[$0] ?? 0.0 }
             let mean = vals.reduce(0, +) / Double(vals.count)

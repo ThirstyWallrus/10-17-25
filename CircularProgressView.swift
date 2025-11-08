@@ -2,16 +2,9 @@
 //  CircularProgressView.swift
 //  DynastyStatDrop
 //
-//  Created by Dynasty Stat Drop on 11/8/25.
-//
-
-
-//
-//  SharedBalanceComponents.swift
-//  DynastyStatDrop
-//
 //  Shared UI components used by balance/info sheets.
-//  Contains: CircularProgressView, visual effects, PositionGauge, BalanceGauge.
+//  Contains: CircularProgressView, PositionGauge, BalanceGauge.
+//  NOTE: Flame/Glow/Ice decorative effects have been removed for simplicity/consistency.
 //
 
 import SwiftUI
@@ -24,22 +17,15 @@ public struct CircularProgressView: View {
     public var lineWidth: CGFloat = 5
 
     private var arcColor: Color {
-        Color(hue: 0.333 - 0.333 * (1 - progress), saturation: 1, brightness: 1)
-    }
-
-    private var effectOverlay: some View {
-        if progress >= 0.8 {
-            AnyView(FlameEffect())
-        } else if progress >= 0.6 {
-            AnyView(GlowEffect(color: .green))
-        } else {
-            AnyView(IceEffect())
-        }
+        // Use tintColor as primary color and subtly shift hue based on progress for contrast.
+        // Keep calculation simple and deterministic.
+        let hueShift = CGFloat(max(0.0, min(1.0, progress)) * 0.08)
+        return tintColor.adjusted(hueShift: hueShift)
     }
 
     private var backgroundCircle: some View {
         Circle()
-            .stroke(Color.white.opacity(0.2), lineWidth: lineWidth)
+            .stroke(Color.white.opacity(0.18), lineWidth: lineWidth)
     }
 
     private var progressArc: some View {
@@ -58,7 +44,7 @@ public struct CircularProgressView: View {
     }
 
     private var progressText: some View {
-        Text(String(format: "%.2f%%", progress * 100))
+        Text(String(format: "%.0f%%", progress * 100))
             .font(.caption)
             .bold()
             .foregroundColor(.white)
@@ -78,148 +64,37 @@ public struct CircularProgressView: View {
             progressText
         }
         .frame(width: 60, height: 60)
-        .overlay {
-            effectOverlay
+    }
+}
+
+// Simple Color extension to allow a subtle hue adjustment without importing extra libs.
+// This keeps visuals consistent while removing heavy decorative effects.
+fileprivate extension Color {
+    func adjusted(hueShift: CGFloat) -> Color {
+        #if os(iOS) || os(watchOS) || os(tvOS)
+        // Try to convert to UIColor and shift hue — fallback to original color on failure.
+        if let ui = UIColor(self).hsbAdjusted(hueShift: hueShift) {
+            return Color(ui)
         }
+        return self
+        #else
+        return self
+        #endif
     }
 }
 
-// MARK: - Visual Effects
-
-public struct FlameBurst: View {
-    let rotation: Angle
-
-    public var body: some View {
-        FlameShape()
-            .fill(LinearGradient(gradient: Gradient(colors: [.yellow, .orange, .red]), startPoint: .bottom, endPoint: .top))
-            .frame(width: 10, height: 20)
-            .offset(y: -35)
-            .rotationEffect(rotation)
-            .blur(radius: 1)
+#if os(iOS) || os(watchOS) || os(tvOS)
+import UIKit
+fileprivate extension UIColor {
+    // Returns a new UIColor with hue shifted by hueShift in [-1,1], preserving saturation/brightness/alpha.
+    func hsbAdjusted(hueShift: CGFloat) -> UIColor? {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard self.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return nil }
+        let newHue = CGFloat(fmod(Double(h + hueShift + 1.0), 1.0))
+        return UIColor(hue: newHue, saturation: s, brightness: b, alpha: a)
     }
 }
-
-public struct FlameEffect: View {
-    private var outerFlameRing: some View {
-        Circle()
-            .stroke(
-                AngularGradient(
-                    gradient: Gradient(colors: [.red, .orange, .yellow, .orange, .red]),
-                    center: .center,
-                    startAngle: .degrees(0),
-                    endAngle: .degrees(360)
-                ),
-                style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [2, 4])
-            )
-            .blur(radius: 2)
-            .frame(width: 70, height: 70)
-    }
-
-    private var innerFlameBursts: some View {
-        ZStack {
-            ForEach(0..<6) { i in
-                FlameBurst(rotation: .degrees(Double(i) * 60 - 90))
-            }
-        }
-    }
-
-    public var body: some View {
-        ZStack {
-            outerFlameRing
-            innerFlameBursts
-        }
-    }
-}
-
-public struct FlameShape: Shape {
-    public func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.midX, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.midY))
-        path.addQuadCurve(to: CGPoint(x: rect.midX, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.midY))
-        return path
-    }
-}
-
-public struct GlowEffect: View {
-    public let color: Color
-
-    private var glowStroke: some View {
-        Circle()
-            .stroke(color, lineWidth: 2)
-            .blur(radius: 4)
-            .frame(width: 70, height: 70)
-    }
-
-    private var glowFill: some View {
-        Circle()
-            .fill(color.opacity(0.2))
-            .blur(radius: 6)
-            .frame(width: 68, height: 68)
-    }
-
-    public init(color: Color) { self.color = color }
-
-    public var body: some View {
-        glowStroke
-            .overlay(glowFill)
-    }
-}
-
-public struct IcicleBurst: View {
-    let i: Int
-
-    public var body: some View {
-        IcicleShape()
-            .fill(LinearGradient(gradient: Gradient(colors: [.white, .cyan, .blue]), startPoint: .top, endPoint: .bottom))
-            .frame(width: 8, height: 15 + CGFloat(i * 2))
-            .offset(x: CGFloat(Double(i * 15) - 22.5), y: 30)
-            .blur(radius: 0.5)
-    }
-}
-
-public struct IceEffect: View {
-    private var frostyOverlay: some View {
-        Circle()
-            .fill(Color.blue.opacity(0.1))
-            .blur(radius: 3)
-            .frame(width: 60, height: 60)
-    }
-
-    private var outerIceBorder: some View {
-        Circle()
-            .stroke(Color.cyan.opacity(0.5), lineWidth: 3)
-            .blur(radius: 2)
-            .frame(width: 70, height: 70)
-    }
-
-    private var icicles: some View {
-        ZStack {
-            ForEach(0..<4) { i in
-                IcicleBurst(i: i)
-            }
-        }
-    }
-
-    public var body: some View {
-        ZStack {
-            frostyOverlay
-            outerIceBorder
-            icicles
-        }
-    }
-}
-
-public struct IcicleShape: Shape {
-    public func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.maxY), control: CGPoint(x: rect.midX, y: rect.maxY + 5))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
-        return path
-    }
-}
+#endif
 
 // MARK: - Position / Balance Gauges (shared)
 
