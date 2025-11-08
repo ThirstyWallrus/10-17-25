@@ -19,7 +19,10 @@ struct WeeklyPositionStats: Identifiable {
     let week: Int
     let score: Double
     let playersPlayed: Int
-    // PATCH: Add displaySlot for strict display logic
+    // PATCH: Strict Duel-Designation Display for lineup slot assignment
+    // displaySlot is now constructed to reflect:
+    //   - Strict slots: join all eligible positions with "/"
+    //   - Flex slots: display as "Flex [POSITION(S)]"
     let displaySlot: String?
 }
 
@@ -83,6 +86,7 @@ class StatsViewModel: ObservableObject {
     // STRICT LINEUP SLOT DISPLAY & ORDERING PATCH:
     // - Use SlotPositionAssigner.countedPosition for credited position assignment.
     // - For display, join duel-designation positions with slashes from altPositions.
+    // - For flex slots, display as "Flex [POSITION(S)]".
 
     private func computePositionWeeklyStats(for team: TeamStanding, in season: SeasonData) -> [Position: [WeeklyPositionStats]] {
         let lineupConfig = team.lineupConfig ?? inferredLineupConfig(from: team.roster)
@@ -146,21 +150,23 @@ class StatsViewModel: ObservableObject {
                     let basePosition = player.position
                     let credited = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: candidatePositions, base: basePosition)
 
-                    // For display:
+                    // PATCH: DISPLAY SLOT NAME LOGIC
+                    // - Strict slots: join all eligible canonical positions with "/"
+                    // - Flex slots: display as "Flex [POSITION(S)]"
+                    let normalizedSlot = PositionNormalizer.normalize(slot)
+                    let isFlex = SlotPositionAssigner.offensiveFlexSlots.contains(slot.uppercased()) || SlotPositionAssigner.idpFlexSlots.contains(slot.uppercased()) || slot.uppercased().contains("IDP")
+                    let duelPositions = candidatePositions.map { PositionNormalizer.normalize($0) }
                     let displaySlot: String = {
-                        let normalizedSlot = PositionNormalizer.normalize(slot)
-                        let isFlex = SlotPositionAssigner.offensiveFlexSlots.contains(slot.uppercased()) || SlotPositionAssigner.idpFlexSlots.contains(slot.uppercased()) || slot.uppercased().contains("IDP")
-                        let duelPositions = candidatePositions.map { PositionNormalizer.normalize($0) }
                         if isFlex {
-                            // Flex [POSITION(S)] (show eligible positions for this player in this slot)
+                            // Flex slot: "Flex [POSITION(S)]"
                             let flexLabel = "Flex " + duelPositions.joined(separator: "/")
                             return flexLabel
                         }
                         if duelPositions.count > 1 {
-                            // Duel-designation: join all eligible positions
+                            // Strict slot, but player eligible for multiple positions: "DL/LB", "LB/DB", etc.
                             return duelPositions.joined(separator: "/")
                         }
-                        // Strict slot: just show the position
+                        // Strict slot, single eligible: just the position
                         return normalizedSlot
                     }()
 

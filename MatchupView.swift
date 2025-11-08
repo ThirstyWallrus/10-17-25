@@ -835,45 +835,44 @@ struct MatchupView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // PATCH: Head-to-Head stats always show ALL-TIME (remove seasonal slice), with debug print.
-       private func headToHeadStatsSection(user: TeamStanding, opp: TeamStanding, league: LeagueData) -> some View {
-           let (h2hRecord, avgMgmtFor, avgPF, avgMgmtAgainst, avgPA) = getHeadToHeadAllTime(userOwnerId: user.ownerId, oppOwnerId: opp.ownerId, league: league)
-           print("DEBUG HeadToHead: userOwnerId=\(user.ownerId), oppOwnerId=\(opp.ownerId), league.allTimeOwnerStats keys=\(league.allTimeOwnerStats?.keys ?? [])")
-           return VStack(alignment: .leading, spacing: 12) {
-               Text("Head-to-Head Stats")
-                   .font(.headline.bold())
-                   .foregroundColor(.orange)
-               HStack(spacing: 16) {
-                   VStack(alignment: .leading, spacing: 4) {
-                       Text(user.name)
-                           .foregroundColor(.cyan)
-                           .bold()
-                       statRow("Record vs Opponent", h2hRecord)
-                       statRow("Mgmt % vs Opponent", String(format: "%.2f%%", avgMgmtFor))
-                       statRow("Avg Points/Game vs Opponent", String(format: "%.1f", avgPF))
-                   }
-                   .frame(maxWidth: .infinity, alignment: .leading)
-                   VStack(alignment: .leading, spacing: 4) {
-                       Text(opp.name)
-                           .foregroundColor(.yellow)
-                           .bold()
-                       statRow("Record vs You", h2hRecord.reverseRecord)
-                       statRow("Mgmt % vs You", String(format: "%.2f%%", avgMgmtAgainst))
-                       statRow("Avg Points/Game vs You", String(format: "%.1f", avgPA))
-                   }
-                   .frame(maxWidth: .infinity, alignment: .leading)
-               }
-           }
-           .padding(16)
-           .background(
-               RoundedRectangle(cornerRadius: 16)
-                   .fill(Color.white.opacity(0.04))
-                   .overlay(
-                       RoundedRectangle(cornerRadius: 16)
-                           .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                   )
-           )
-       }
+    // PATCH: Head-to-Head stats always show ALL-TIME (remove seasonal slice).
+    private func headToHeadStatsSection(user: TeamStanding, opp: TeamStanding, league: LeagueData) -> some View {
+        let (h2hRecord, avgMgmtFor, avgPF, avgMgmtAgainst, avgPA) = getHeadToHeadAllTime(userOwnerId: user.ownerId, oppOwnerId: opp.ownerId, league: league)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Head-to-Head Stats")
+                .font(.headline.bold())
+                .foregroundColor(.orange)
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user.name)
+                        .foregroundColor(.cyan)
+                        .bold()
+                    statRow("Record vs Opponent", h2hRecord)
+                    statRow("Mgmt % vs Opponent", String(format: "%.2f%%", avgMgmtFor))
+                    statRow("Avg Points/Game vs Opponent", String(format: "%.1f", avgPF))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(opp.name)
+                        .foregroundColor(.yellow)
+                        .bold()
+                    statRow("Record vs You", h2hRecord.reverseRecord)
+                    statRow("Mgmt % vs You", String(format: "%.2f%%", avgMgmtAgainst))
+                    statRow("Avg Points/Game vs You", String(format: "%.1f", avgPA))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
 
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack {
@@ -891,14 +890,12 @@ struct MatchupView: View {
 
     /// Always use all-time head-to-head stats (from league.allTimeOwnerStats).
     private func getHeadToHeadAllTime(userOwnerId: String, oppOwnerId: String, league: LeagueData) -> (record: String, avgMgmtFor: Double, avgPF: Double, avgMgmtAgainst: Double, avgPA: Double) {
-           guard let userAgg = league.allTimeOwnerStats?[userOwnerId],
-                 let h2h = userAgg.headToHeadVs[oppOwnerId] else {
-               print("DEBUG getHeadToHeadAllTime: No stats found for userOwnerId=\(userOwnerId), oppOwnerId=\(oppOwnerId)")
-               return ("0-0", 0.0, 0.0, 0.0, 0.0)
-           }
-           return (h2h.record, h2h.avgMgmtFor, h2h.avgPointsFor, h2h.avgMgmtAgainst, h2h.avgPointsAgainst)
-       }
-
+        guard let userAgg = league.allTimeOwnerStats?[userOwnerId],
+              let h2h = userAgg.headToHeadVs[oppOwnerId] else {
+            return ("0-0", 0.0, 0.0, 0.0, 0.0)
+        }
+        return (h2h.record, h2h.avgMgmtFor, h2h.avgPointsFor, h2h.avgMgmtAgainst, h2h.avgPointsAgainst)
+    }
 
     private func positionColor(_ pos: String) -> Color {
         switch pos {
