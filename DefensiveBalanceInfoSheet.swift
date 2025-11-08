@@ -37,66 +37,72 @@ struct DefensiveBalanceInfoSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            // Grab bar
-            Capsule()
-                .fill(Color.white.opacity(0.15))
-                .frame(width: 40, height: 6)
-                .padding(.vertical, 8)
+        // Wrap entire sheet in a ScrollView so the "More info" disclosure content (or any overflow)
+        // becomes scrollable when the sheet is presented on smaller detents / devices.
+        ScrollView {
+            VStack(spacing: 12) {
+                // Grab bar
+                Capsule()
+                    .fill(Color.white.opacity(0.15))
+                    .frame(width: 40, height: 6)
+                    .padding(.vertical, 8)
 
-            Text("Defensive Efficiency Spotlight")
-                .font(.headline)
-                .foregroundColor(.yellow)
-
-            // Top gauges (DL, LB, DB)
-            HStack(spacing: 10) {
-                PositionGauge(pos: "DL", pct: positionPercents["DL"] ?? 0, color: positionColors["DL"]!)
-                PositionGauge(pos: "LB", pct: positionPercents["LB"] ?? 0, color: positionColors["LB"]!)
-                PositionGauge(pos: "DB", pct: positionPercents["DB"] ?? 0, color: positionColors["DB"]!)
-            }
-
-            // Balance summary and tagline
-            VStack(spacing: 8) {
-                HStack {
-                    Spacer()
-                    BalanceGauge(balance: balancePercent)
-                    Spacer()
-                }
-                Text(tagline)
-                    .font(.caption2)
+                Text("Defensive Efficiency Spotlight")
+                    .font(.headline)
                     .foregroundColor(.yellow)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
 
-            // More info disclosure — identical content & presentation to the offensive sheet's More info
-            DisclosureGroup {
-                // Inline detailed content to avoid cross-file visibility/ordering issues.
-                BalanceDetailInline(
-                    orderedPositions: orderedPositions,
-                    positionPercents: positionPercents,
-                    balancePercent: balancePercent
-                )
-                .padding(.top, 8)
-            } label: {
-                HStack {
-                    Spacer()
-                    Text("More info")
-                        .font(.caption2).bold()
-                        .foregroundColor(.white.opacity(0.9))
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.8))
-                    Spacer()
+                // Top gauges (DL, LB, DB)
+                HStack(spacing: 10) {
+                    PositionGauge(pos: "DL", pct: positionPercents["DL"] ?? 0, color: positionColors["DL"]!)
+                    PositionGauge(pos: "LB", pct: positionPercents["LB"] ?? 0, color: positionColors["LB"]!)
+                    PositionGauge(pos: "DB", pct: positionPercents["DB"] ?? 0, color: positionColors["DB"]!)
                 }
-                .padding(.vertical, 6)
-            }
-            .padding(.horizontal)
 
-            Spacer(minLength: 12)
+                // Balance summary and tagline
+                VStack(spacing: 8) {
+                    HStack {
+                        Spacer()
+                        BalanceGauge(balance: balancePercent)
+                        Spacer()
+                    }
+                    Text(tagline)
+                        .font(.caption2)
+                        .foregroundColor(.yellow)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+
+                // More info disclosure — identical content & presentation to the offensive sheet's More info
+                DisclosureGroup {
+                    // Inline detailed content to avoid cross-file visibility/ordering issues.
+                    // Wrap the inline content in a VStack with padding and allow it to size naturally.
+                    BalanceDetailInline(
+                        orderedPositions: orderedPositions,
+                        positionPercents: positionPercents,
+                        balancePercent: balancePercent
+                    )
+                    .padding(.top, 8)
+                } label: {
+                    HStack {
+                        Spacer()
+                        Text("More info")
+                            .font(.caption2).bold()
+                            .foregroundColor(.white.opacity(0.9))
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.8))
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                }
+                .padding(.horizontal)
+
+                Spacer(minLength: 12)
+            }
+            .padding(.bottom, 16)
         }
-        .padding(.bottom, 16)
-        .background(Color.black)
+        // Keep background consistent with other sheets and allow safe-area extension.
+        .background(Color.black.edgesIgnoringSafeArea(.bottom))
     }
 }
 
@@ -199,5 +205,6 @@ private struct BalanceDetailInline: View {
                 .foregroundColor(.white.opacity(0.9))
             }
         }
+        .padding(.horizontal)
     }
 }
