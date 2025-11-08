@@ -818,9 +818,12 @@ struct OffStatExpandedView: View {
         // Present the OffensiveBalanceInfoSheet when user taps the center Balance element
         .sheet(isPresented: $showOffBalanceDetail) {
             // Use OffensiveBalanceInfoSheet (the explanatory popup you added to the project)
+            // NOTE: the OffensiveBalanceInfoSheet initializer expects the label 'balancedPercent'
+            // and an optional 'tagline' parameter. Provide the tagline for better UX.
             OffensiveBalanceInfoSheet(
                 positionPercents: positionMgmtPercents,
-                balancePercent: positionBalancePercent
+                balancedPercent: positionBalancePercent,
+                tagline: generatePositionBalanceTagline()
             )
             .presentationDetents([PresentationDetent.fraction(0.40)])
         }
