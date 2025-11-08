@@ -152,14 +152,41 @@ struct MatchupView: View {
 
     // Week selector default logic
     private func setDefaultWeekSelection() {
-        let weekStr = "Week \(currentMatchupWeek)"
-        if availableWeeks.contains(weekStr) {
-            selectedWeek = weekStr
-        } else if let lastWeek = availableWeeks.last {
-            selectedWeek = lastWeek
-        } else {
-            selectedWeek = "" // None available
+        // Goal: default to the current matchup week whenever possible.
+        // If the exact "Week X" for currentMatchupWeek is present in availableWeeks, pick it.
+        // If not present, pick the nearest prior week available; if none prior, pick the earliest available.
+        let desiredWeek = currentMatchupWeek
+
+        // Parse available week numbers
+        let availableNums = availableWeeks
+            .compactMap { Int($0.replacingOccurrences(of: "Week ", with: "")) }
+            .sorted()
+
+        guard !availableNums.isEmpty else {
+            // No available weeks known
+            selectedWeek = ""
+            return
         }
+
+        if availableNums.contains(desiredWeek) {
+            selectedWeek = "Week \(desiredWeek)"
+            return
+        }
+
+        // Prefer the largest available week that is <= desiredWeek (nearest past/current)
+        if let nearestPast = availableNums.filter({ $0 <= desiredWeek }).max() {
+            selectedWeek = "Week \(nearestPast)"
+            return
+        }
+
+        // Otherwise pick the earliest available week
+        if let first = availableNums.first {
+            selectedWeek = "Week \(first)"
+            return
+        }
+
+        // Fallback (shouldn't reach here)
+        selectedWeek = "Week \(availableNums.last!)"
     }
 
     private func refreshData() {
@@ -290,7 +317,7 @@ struct MatchupView: View {
                 displaySlot = "Flex " + eligiblePositions.joined(separator: "/")
                 slotColor = colorForPosition(eligiblePositions.first ?? normPos)
             } else if isDefensiveFlexSlot(slot) {
-                // Flex defensive: "Flex [POSITION(S)]", color by first eligible
+                // Flex defensive: "Flex " + eligiblePositions.joined(separator: "/")
                 displaySlot = "Flex " + eligiblePositions.joined(separator: "/")
                 slotColor = colorForPosition(eligiblePositions.first ?? normPos)
             } else if ["QB","RB","WR","TE","K","DL","LB","DB"].contains(slot.uppercased()) {
