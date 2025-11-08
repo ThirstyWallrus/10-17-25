@@ -797,14 +797,7 @@ struct OffStatExpandedView: View {
 
             sectionHeader("Recent Form")
             recentForm
-            if let team = team, let league = league {
-                StatDropAnalysisBox(
-                    team: team,
-                    league: league,
-                    context: .offense,
-                    personality: .classicESPN
-                )
-            }
+
             sectionHeader("Consistency Score")
             consistencyRow
         }

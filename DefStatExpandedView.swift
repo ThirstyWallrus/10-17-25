@@ -608,14 +608,7 @@ struct DefStatExpandedView: View {
 
             sectionHeader("Recent Form")
             recentForm
-            if let team = team, let league = league {
-                StatDropAnalysisBox(
-                    team: team,
-                    league: league,
-                    context: .defense,
-                    personality: .classicESPN
-                )
-            }
+
             sectionHeader("Consistency Score")
             consistencyRow
 
@@ -887,7 +880,6 @@ struct DefStatExpandedView: View {
     }
 
     // Small components (copied/consistent with TeamStat)
-
     private struct ConsistencyMeter: View {
         let stdDev: Double
         private var norm: Double { max(0, min(1, stdDev / 60.0)) }
