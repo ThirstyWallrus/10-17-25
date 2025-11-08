@@ -409,39 +409,70 @@ class SleeperLeagueManager: ObservableObject {
         var out: [Int: [MatchupEntry]] = [:]
         var allRosterIds: Set<Int> = []
 
-        // First, try to fetch all matchups for each week
-        for week in 1...18 {
+        // Heuristic / dynamic detection:
+        //  - Try to fetch league metadata to learn currentWeek (if available).
+        //  - Iterate weeks starting at 1 until we see a short run of consecutive empty results
+        //    (consecutiveThreshold) OR until we reach a safe cap (maxCap).
+        //  - This avoids hardcoding 1...18 and reduces wasted network calls while still capturing
+        //    leagues with more or fewer weeks.
+        let maxCap = 26                   // safety cap for worst case leagues
+        let consecutiveThreshold = 3     // stop after this many empty weeks in a row (heuristic)
+        var consecutiveEmpty = 0
+        var lastNonEmptyWeek: Int? = nil
+
+        // Try to fetch league metadata for heuristic currentWeek
+        let leagueInfo: SleeperLeague? = try? await fetchLeague(leagueId: leagueId)
+        let heuristicCurrentWeek = leagueInfo?.currentWeek ?? 1
+        // searchMax is at least 18 and includes a small buffer beyond currentWeek
+        let searchMax = max(18, heuristicCurrentWeek + 2)
+        let cap = min(maxCap, searchMax)
+
+        var week = 1
+        while week <= cap && consecutiveEmpty < consecutiveThreshold {
             let url = URL(string: "https://api.sleeper.app/v1/league/\(leagueId)/matchups/\(week)")!
-            if let (data, _) = try? await URLSession.shared.data(from: url),
-               let entries = try? JSONDecoder().decode([MatchupEntry].self, from: data),
-               !entries.isEmpty {
-                out[week] = entries
-                allRosterIds.formUnion(entries.map { $0.roster_id })
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let entries = try? JSONDecoder().decode([MatchupEntry].self, from: data), !entries.isEmpty {
+                    out[week] = entries
+                    allRosterIds.formUnion(entries.map { $0.roster_id })
+                    consecutiveEmpty = 0
+                    lastNonEmptyWeek = week
+                } else {
+                    // empty array returned -> increment empty counter
+                    consecutiveEmpty += 1
+                }
+            } catch {
+                // network or decode error -> treat as an empty result for heuristics
+                consecutiveEmpty += 1
             }
+            week += 1
         }
 
-        // PATCH: Find all roster IDs across all weeks
+        // If we still have no roster IDs, fallback to the rosters endpoint
         if allRosterIds.isEmpty {
-            // Fallback: get roster IDs from rosters endpoint if not set
-            let rosters = try? await fetchRosters(leagueId: leagueId)
-            if let rosters = rosters {
+            if let rosters = try? await fetchRosters(leagueId: leagueId) {
                 allRosterIds = Set(rosters.map { $0.roster_id })
             }
         }
 
-        // PATCH: For every week, ensure every roster_id has a MatchupEntry
-        for week in 1...18 {
-            let entries = out[week] ?? []
-            let existingIds = Set(entries.map { $0.roster_id })
-            let missingIds = allRosterIds.subtracting(existingIds)
-            var completedEntries = entries
+        // Determine effective last week to ensure we cover all played weeks.
+        // Prefer lastNonEmptyWeek, else use heuristicCurrentWeek, otherwise fallback to 18.
+        let effectiveLastWeek: Int = {
+            if let last = lastNonEmptyWeek { return last }
+            if heuristicCurrentWeek > 1 { return heuristicCurrentWeek - 1 } // if currentWeek points to in-progress week, use previous
+            return 18
+        }()
 
-            // For each missing team/roster, add a blank entry so UI always has week data
+        // Ensure each roster has an entry for every week up to effectiveLastWeek
+        for wk in 1...effectiveLastWeek {
+            var completedEntries = out[wk] ?? []
+            let existingIds = Set(completedEntries.map { $0.roster_id })
+            let missingIds = allRosterIds.subtracting(existingIds)
             for rid in missingIds {
                 completedEntries.append(
                     MatchupEntry(
                         roster_id: rid,
-                        matchup_id: week,
+                        matchup_id: wk,
                         points: 0.0,
                         players_points: [:],
                         players_projected_points: [:],
@@ -450,7 +481,7 @@ class SleeperLeagueManager: ObservableObject {
                     )
                 )
             }
-            out[week] = completedEntries
+            out[wk] = completedEntries
         }
 
         return out
