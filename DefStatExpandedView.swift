@@ -2,18 +2,6 @@
 //  DefStatExpandedView.swift
 //  DynastyStatDrop
 //
-//  Uses authoritative matchup.players_points when available; sums starters only when starters present.
-//  Falls back to deduped roster.weeklyScores when necessary.
-//
-//  Patched to compute DPF/DPPW from authoritative per-week defensive totals, include started-then-dropped
-//  players via SleeperLeagueManager caches, use non-zero completed weeks for averages, and apply
-//  defense-only grading via gradeTeamsDefense.
-//
-//  UPDATED: Mirror OffStatExpandedView UX/structure — top title + 4 stat bubbles (Grade, DPF, DMPF, DPPW),
-//  ManagementPill for lineup efficiency, and a Defensive Efficiency Spotlight (position-level mgmt% gauges)
-//  with a tappable balance center that shows a detail sheet. All logic mirrors the offense view but
-//  applied to defense (DL/LB/DB).
-//
 
 import SwiftUI
 
@@ -612,11 +600,7 @@ struct DefStatExpandedView: View {
             sectionHeader("Consistency Score")
             consistencyRow
 
-            // Strengths / Weaknesses chips
-            sectionHeader("Strengths")
-            FlowLayoutCompat(items: strengths) { Pill(text: $0, bg: Color.green.opacity(0.22), stroke: .green) }
-            sectionHeader("Weaknesses")
-            FlowLayoutCompat(items: weaknesses) { Pill(text: $0, bg: Color.red.opacity(0.22), stroke: .red) }
+            // Strengths / Weaknesses sections removed per request.
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
