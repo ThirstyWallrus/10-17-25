@@ -5,6 +5,7 @@
 //  PATCHED:
 //   • Propagates Sleeper userId and username to AppSelection after import, for correct team selection
 //   • Ensures AppSelection picks user's own team (via ownerId) after importing a league
+//   • Prefills the username input with the previously-saved Sleeper username for the current DSD user
 //   • No UI/visual changes, preserves all existing logic and continuity
 //
 
@@ -49,6 +50,12 @@ struct SleeperLeaguesView: View {
             .onAppear {
                 // Ensure persisted leagues are loaded (safe idempotent)
                 manager.loadLeagues()
+
+                // Prefill the Sleeper username input if the logged-in DSD user has one saved
+                if let dsdUser = authViewModel.currentUsername,
+                   let saved = UserDefaults.standard.string(forKey: "sleeperUsername_\(dsdUser)") {
+                    username = saved
+                }
             }
         }
     }
@@ -207,6 +214,8 @@ struct SleeperLeaguesView: View {
             if let dsdUser = authViewModel.currentUsername {
                 UserDefaults.standard.set(sleeperUserId, forKey: "sleeperUserId_\(dsdUser)")
                 authViewModel.sleeperUserId = sleeperUserId
+                // Persist the Sleeper username for this DSD user so it is pre-filled next time
+                UserDefaults.standard.set(username, forKey: "sleeperUsername_\(dsdUser)")
             }
 
             try await manager.fetchAndImportSingleLeague(leagueId: selectedLeagueId, username: username)

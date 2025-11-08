@@ -9,6 +9,8 @@
 //      - Passed both username and user_id to AppSelection.updateLeagues
 //      - Persists user_id in AuthViewModel for current user
 //      - Guarantees correct team selection after import and sync
+//      - Persist and restore per-DSD-user Sleeper username so the Upload text field is prefilled
+//
 
 import SwiftUI
 
@@ -51,6 +53,10 @@ struct SleeperLeaguesImportView: View {
         .onAppear {
             if let dsdUser = authViewModel.currentUsername {
                 leagueManager.setActiveUser(username: dsdUser)
+                // Prefill the sleeper username for this DSD user if saved
+                if let saved = UserDefaults.standard.string(forKey: "sleeperUsername_\(dsdUser)") {
+                    sleeperUsername = saved
+                }
             }
             fetchedLeagues = []
             selectedLeagueId = ""
@@ -308,10 +314,12 @@ struct SleeperLeaguesImportView: View {
             let sleeperUser = try await leagueManager.fetchUser(username: sleeperUsername)
             let sleeperUserId = sleeperUser.user_id
 
-            // Persist for later matching (AuthViewModel tracks it per current user)
+            // Persist userId in AuthViewModel if logged in
             if let dsdUser = authViewModel.currentUsername {
                 UserDefaults.standard.set(sleeperUserId, forKey: "sleeperUserId_\(dsdUser)")
                 authViewModel.sleeperUserId = sleeperUserId
+                // Persist the Sleeper username for this DSD user so the field is prefilled next time
+                UserDefaults.standard.set(sleeperUsername, forKey: "sleeperUsername_\(dsdUser)")
             }
 
             // Import league using full userId context
@@ -329,7 +337,7 @@ struct SleeperLeaguesImportView: View {
                 UserDefaults.standard.set(true, forKey: "hasImportedLeague_\(dsdUser)")
             } else {
                 appSelection.updateLeagues(
-                    leagueManager.leagues,
+                    manager.leagues,
                     sleeperUserId: sleeperUserId
                 )
             }
@@ -364,6 +372,8 @@ struct SleeperLeaguesImportView: View {
                 if let dsdUser = authViewModel.currentUsername {
                     UserDefaults.standard.set(sleeperUserId, forKey: "sleeperUserId_\(dsdUser)")
                     authViewModel.sleeperUserId = sleeperUserId
+                    // Also save the Sleeper username for this DSD user (helps prefill next time)
+                    UserDefaults.standard.set(username, forKey: "sleeperUsername_\(dsdUser)")
                 }
                 try await leagueManager.fetchAndImportSingleLeague(
                     leagueId: leagueId,
