@@ -111,13 +111,36 @@ struct MatchupView: View {
         return league.seasons.first(where: { $0.id == appSelection.selectedSeason })?.teams ?? currentSeasonTeams
     }
 
-    // Week menu, use matchupsByWeek if available
+    // Helper: determine if a matchup week has meaningful data (not solely padded placeholders)
+    private func weekHasMeaningfulData(_ entries: [MatchupEntry]) -> Bool {
+        return entries.contains { entry in
+            if let pp = entry.players_points, !pp.isEmpty { return true }
+            if let starters = entry.starters, !starters.isEmpty { return true }
+            if let pts = entry.points, pts != 0.0 { return true }
+            return false
+        }
+    }
+
+    // Week menu, use matchupsByWeek if available but only surface weeks that actually have data
     private var availableWeeks: [String] {
-        guard let league, let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) ?? league.seasons.last,
-              let weeks = season.matchupsByWeek?.keys.sorted(), !weeks.isEmpty else {
+        guard let league,
+              let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) ?? league.seasons.last,
+              let weeksDict = season.matchupsByWeek
+        else {
             return []
         }
-        return weeks.map { "Week \($0)" }
+
+        // Only include weeks that have meaningful data.
+        let sortedKeys = weeksDict.keys.sorted()
+        let filtered = sortedKeys.filter { wk in
+            if let entries = weeksDict[wk] {
+                return weekHasMeaningfulData(entries)
+            }
+            return false
+        }
+        // If no meaningful weeks found, fallback to any weeks present (preserves previous behavior)
+        let finalKeys = filtered.isEmpty ? sortedKeys : filtered
+        return finalKeys.map { "Week \($0)" }
     }
 
     private var currentSeasonId: String {
@@ -132,14 +155,30 @@ struct MatchupView: View {
         appSelection.selectedTeam
     }
 
-    /// Returns the current week by finding the largest key in matchupsByWeek, or 1 if unavailable
+    /// Returns the current week by preferring the league's most-recent meaningful week (in-progress or most recent with data).
+    /// Falls back to the largest key in matchupsByWeek, or 1 if unavailable.
     private var currentMatchupWeek: Int {
         guard let league,
               let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) ?? league.seasons.last,
-              let weeks = season.matchupsByWeek?.keys, !weeks.isEmpty else {
+              let weeksDict = season.matchupsByWeek,
+              !weeksDict.isEmpty else {
             return 1
         }
-        return weeks.max() ?? 1
+
+        // Preferred: largest week number that contains meaningful data (players_points/starters/non-zero points)
+        let meaningfulWeeks = weeksDict.keys.sorted().filter { wk in
+            if let entries = weeksDict[wk] {
+                return weekHasMeaningfulData(entries)
+            }
+            return false
+        }
+        if let maxMeaningful = meaningfulWeeks.max() {
+            // If there is a week that has meaningful data and it's the latest played or current, use it
+            return maxMeaningful
+        }
+
+        // If no meaningful weeks (very unusual), fall back to the largest available key
+        return weeksDict.keys.max() ?? 1
     }
 
     /// Determines the currently selected week number, defaults to currentMatchupWeek if not set

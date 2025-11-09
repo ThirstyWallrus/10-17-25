@@ -76,7 +76,8 @@ struct StandingsExplorerView: View {
     }
 
     private var headerBar: some View {
-        HStack(spacing: 8) {
+        HStack {
+            Spacer()
             Text("Standings Explorer")
                 .font(.custom("Phatt", size: 22))
                 .foregroundColor(colorForCategory(selected))
