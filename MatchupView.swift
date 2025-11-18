@@ -736,21 +736,23 @@ struct MatchupView: View {
     }
 
     private var statDropContent: some View {
-        Group {
-            if let team = userTeamStanding, let lg = league {
-                StatDropAnalysisBox(
-                    team: team,
-                    league: lg,
-                    context: .fullTeam,
-                    personality: userStatDropPersonality
-                )
-            } else {
-                Text("No data available for Stat Drop.")
-                    .foregroundColor(.white.opacity(0.7))
-                    .font(.body)
+            Group {
+                if let team = userTeamStanding, let lg = league {
+                    StatDropAnalysisBox(
+                        team: team,
+                        league: lg,
+                        context: .matchup,
+                        personality: userStatDropPersonality,
+                        opponent: opponentTeamStanding,
+                        explicitWeek: currentWeekNumber
+                    )
+                } else {
+                    Text("No data available for Stat Drop.")
+                        .foregroundColor(.white.opacity(0.7))
+                        .font(.body)
+                }
             }
         }
-    }
 
     // MARK: - Matchup Content
 

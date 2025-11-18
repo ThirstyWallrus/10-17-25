@@ -567,23 +567,26 @@ struct MyLeagueView: View {
     }
 
     private var statDropContent: some View {
-        Group {
-            if appSelection.selectedSeason == "All Time" || (appSelection.selectedSeason != currentSeasonId && selectedWeek != "Full Season") {
-                Text("Weekly Stat Drops are only available for the current season.")
-                    .foregroundColor(.white.opacity(0.7))
-                    .font(.body)
-            } else if let team = selectedTeamSeason, let league = league {
-                StatDropAnalysisBox(
-                    team: team,
-                    league: league,
-                    context: .fullTeam,
-                    personality: userStatDropPersonality
-                )
-            } else {
-                Text("No data available.")
+            Group {
+                if appSelection.selectedSeason == "All Time" || (appSelection.selectedSeason != currentSeasonId && selectedWeek != "Full Season") {
+                    Text("Weekly Stat Drops are only available for the current season.")
+                        .foregroundColor(.white.opacity(0.7))
+                        .font(.body)
+                } else if let team = selectedTeamSeason, let league = league {
+                    StatDropAnalysisBox(
+                        team: team,
+                        league: league,
+                        context: .myLeague,
+                        personality: userStatDropPersonality,
+                        opponent: nil,
+                        explicitWeek: getSelectedWeekNumber()
+                    )
+                } else {
+                    Text("No data available.")
+                }
             }
         }
-    }
+
 
     // MARK: Standings
     private var standingsSection: some View {

@@ -338,11 +338,15 @@ struct MyTeamView: View {
                         .foregroundColor(.white.opacity(0.7))
                         .font(.body)
                 } else if let team = selectedTeamSeason, let league = league {
+                    // New: use the view-specific context .myTeam, and pass an explicitWeek when user selected a week.
+                    // This ensures the stat drop is tailored to MyTeamView and can include week-specific look-ahead/preview content.
                     StatDropAnalysisBox(
                         team: team,
                         league: league,
-                        context: .fullTeam,
-                        personality: userStatDropPersonality
+                        context: .myTeam,
+                        personality: userStatDropPersonality,
+                        opponent: nil,
+                        explicitWeek: getSelectedWeekNumber()
                     )
                 } else {
                     Text("No data available.")
@@ -609,12 +613,12 @@ struct MyTeamView: View {
             }
             return (0,0,0)
         } else if let week = getSelectedWeekNumber(), let t = selectedTeamSeason {
-            let (_, _, offActual, offMax, defActual, defMax) = computeWeeklyLineupPointsPatched(team: t, week: week)
-            let actual = offActual + defActual
+            let (_, _, offAct, offMax, defAct, defMax) = computeWeeklyLineupPointsPatched(team: t, week: week)
+            let actual = offAct + defAct
             let maxPF = offMax + defMax
             let mgmt = maxPF > 0 ? (actual / maxPF * 100) : 0
-            let off = offMax > 0 ? (offActual / offMax * 100) : 0
-            let defMgmt = defMax > 0 ? (defActual / defMax * 100) : 0
+            let off = offMax > 0 ? (offAct / offMax * 100) : 0
+            let defMgmt = defMax > 0 ? (defAct / defMax * 100) : 0
             return (mgmt, off, defMgmt)
         } else {
             return (0,0,0)
