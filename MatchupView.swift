@@ -176,7 +176,9 @@ struct MatchupView: View {
         }
 
         // If the leagueManager has a global current week (pulled from the Sleeper API), prefer it:
-        if let gw = leagueManager.globalCurrentWeek, gw > 0 {
+        // NOTE: leagueManager.globalCurrentWeek is an Int (non-optional) so bind it directly.
+        let gw = leagueManager.globalCurrentWeek
+        if gw > 0 {
             // If gw itself has meaningful data, use it.
             if meaningfulWeeks.contains(gw) {
                 return gw

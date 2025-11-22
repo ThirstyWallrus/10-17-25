@@ -135,6 +135,9 @@ class SleeperLeagueManager: ObservableObject {
     @Published var leaguePlayoffStartWeeks: [String: Int] = [:]
     @Published var isRefreshing: Bool = false
 
+    // NEW: Global current week reported from Sleeper API (helps views pick the "current" week)
+    @Published var globalCurrentWeek: Int = 1
+
     private var activeUsername: String = "global"
     private let legacySingleFilePrefix = "leagues_"
     private let legacyFilename = "leagues.json"
@@ -334,6 +337,8 @@ class SleeperLeagueManager: ObservableObject {
         clearCaches()
         let user = try await fetchUser(username: username)
         let baseLeague = try await fetchLeague(leagueId: leagueId)
+        // Update the global current week when we fetch league metadata
+        self.globalCurrentWeek = max(self.globalCurrentWeek, baseLeague.currentWeek)
         let playoffStart = extractPlayoffStartWeek(from: baseLeague)
         leaguePlayoffStartWeeks[leagueId] = playoffStart
         playoffStartWeek = playoffStart
@@ -423,6 +428,9 @@ class SleeperLeagueManager: ObservableObject {
         // Try to fetch league metadata for heuristic currentWeek
         let leagueInfo: SleeperLeague? = try? await fetchLeague(leagueId: leagueId)
         let heuristicCurrentWeek = leagueInfo?.currentWeek ?? 1
+        // Update the global current week on the manager so views can observe it
+        self.globalCurrentWeek = max(self.globalCurrentWeek, heuristicCurrentWeek)
+
         // searchMax is at least 18 and includes a small buffer beyond currentWeek
         let searchMax = max(18, heuristicCurrentWeek + 2)
         let cap = min(maxCap, searchMax)
@@ -687,10 +695,9 @@ class SleeperLeagueManager: ObservableObject {
                 var weekMax = 0.0, weekOff = 0.0, weekDef = 0.0
 
                 for slot in optimalOrder {
-                    let allowed = allowedPositions(for: slot).map { PositionNormalizer.normalize($0) }
-                    let allowedSet = Set(allowed)
+                    let allowed = allowedPositions(for: slot)
                     let pick = candidates
-                        .filter { !used.contains($0.id) && isEligible($0, allowed: allowedSet) }
+                        .filter { !used.contains($0.id) && isEligible($0, allowed: allowed) }
                         .max(by: { $0.points < $1.points })
 
                     guard let best = pick else { continue }
@@ -1046,6 +1053,8 @@ extension SleeperLeagueManager {
         guard let latestSeason = league.seasons.sorted(by: { $0.id < $1.id }).last else { return nil }
 
         let baseLeague = try await fetchLeague(leagueId: league.id)
+        // update global week when refreshing
+        self.globalCurrentWeek = max(self.globalCurrentWeek, baseLeague.currentWeek)
 
         let rosters = try await fetchRosters(leagueId: league.id)
         let users = try await fetchLeagueUsers(leagueId: league.id)
