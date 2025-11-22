@@ -157,6 +157,7 @@ struct MatchupView: View {
 
     /// Returns the current week by preferring the league's most-recent meaningful week (in-progress or most recent with data).
     /// Falls back to the largest key in matchupsByWeek, or 1 if unavailable.
+    /// NOTE: This now prefers the global current week published by SleeperLeagueManager when available.
     private var currentMatchupWeek: Int {
         guard let league,
               let season = league.seasons.first(where: { $0.id == appSelection.selectedSeason }) ?? league.seasons.last,
@@ -165,20 +166,38 @@ struct MatchupView: View {
             return 1
         }
 
-        // Preferred: largest week number that contains meaningful data (players_points/starters/non-zero points)
-        let meaningfulWeeks = weeksDict.keys.sorted().filter { wk in
+        let weekKeys = weeksDict.keys.sorted()
+        // Preferred: largest week number that contains meaningful data
+        let meaningfulWeeks = weekKeys.filter { wk in
             if let entries = weeksDict[wk] {
                 return weekHasMeaningfulData(entries)
             }
             return false
         }
+
+        // If the leagueManager has a global current week (pulled from the Sleeper API), prefer it:
+        if let gw = leagueManager.globalCurrentWeek, gw > 0 {
+            // If gw itself has meaningful data, use it.
+            if meaningfulWeeks.contains(gw) {
+                return gw
+            }
+            // If not, prefer the nearest meaningful week <= gw
+            if let nearestPast = meaningfulWeeks.filter({ $0 <= gw }).max() {
+                return nearestPast
+            }
+            // Otherwise prefer the nearest available key <= gw (even if not flagged meaningful)
+            if let nearestPastAny = weekKeys.filter({ $0 <= gw }).max() {
+                return nearestPastAny
+            }
+            // If gw is before any available week, fall through and pick latest meaningful/available below
+        }
+
         if let maxMeaningful = meaningfulWeeks.max() {
-            // If there is a week that has meaningful data and it's the latest played or current, use it
             return maxMeaningful
         }
 
         // If no meaningful weeks (very unusual), fall back to the largest available key
-        return weeksDict.keys.max() ?? 1
+        return weekKeys.max() ?? 1
     }
 
     /// Determines the currently selected week number, defaults to currentMatchupWeek if not set
@@ -594,8 +613,17 @@ struct MatchupView: View {
         }
         .ignoresSafeArea(edges: .bottom)
         .onAppear {
+            // Ensure we attempt to default the week immediately
             setDefaultWeekSelection()
+            // Refresh league data (which calls setDefaultWeekSelection() again on success)
             refreshData()
+        }
+        // Recompute default week when season/league selection changes to avoid stale defaults
+        .onChange(of: appSelection.selectedSeason) { _ in
+            setDefaultWeekSelection()
+        }
+        .onChange(of: appSelection.selectedLeagueId) { _ in
+            setDefaultWeekSelection()
         }
     }
 
@@ -680,7 +708,8 @@ struct MatchupView: View {
                 weekMenuRow(for: wk)
             }
         } label: {
-            menuLabel(selectedWeek.isEmpty ? (availableWeeks.last ?? "Week 1") : selectedWeek)
+            // IMPORTANT: when selectedWeek is empty show the computed currentMatchupWeek rather than availableWeeks.last
+            menuLabel(selectedWeek.isEmpty ? "Week \(currentMatchupWeek)" : selectedWeek)
         }
     }
 
