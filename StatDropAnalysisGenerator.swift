@@ -6,12 +6,13 @@
 //  Supports multiple personalities and context-specific analysis (team, offense, defense, full).
 //
 //  ENHANCEMENTS (v2):
-//  - Deeper analysis: position PPW, individual PPW, league comparisons, management breakdowns, rivalries.
-//  - Personable & comical: tailored language per personality.
-//  - Robustness: dynamic templates with conditional logic and fallbacks.
-//  - View-specific generators: myTeam, myLeague, matchup.
-//  - Persistence updated to include opponent id for matchup context.
-//
+//  - Deeper analysis: Incorporate more stats (position PPW, individual PPW, league comparisons, management breakdowns, records, highs/lows, rivalries).
+//  - Personable & comical: Tailor language per personality with puns, exaggerations, motivational quips, sarcasm.
+//  - Robustness: Dynamic templates with conditional logic for highs/lows, comparisons; use all available TeamStanding & AggregatedOwnerStats fields.
+//  - Creative originality: Vary sentence structures, add unique flair (e.g., analogies, pop culture refs for hype/snarky).
+//  - Structure: Break into helpers for stat extraction, phrase building, and assembly.
+//  - Fallbacks: Graceful handling for missing data.
+//  - Length: FullTeam ~300-500 words; Cards ~100-200 words for brevity.
 
 import Foundation
 import SwiftUI
@@ -20,7 +21,7 @@ private let offensivePositions: Set<String> = ["QB", "RB", "WR", "TE", "K"]
 private let defensivePositions: Set<String> = ["DL", "LB", "DB"]
 private let offensiveFlexSlots: Set<String> = ["FLEX", "WRRB", "WRRBTE", "WRRB_TE", "RBWR", "RBWRTE", "SUPER_FLEX", "QBRBWRTE", "QBRBWR", "QBSF", "SFLX"]
 
-// MARK: - Stat Drop Personality
+// MARK: - Stat Drop Personality (Unchanged)
 
 enum StatDropPersonality: String, CaseIterable, Identifiable, Codable {
     case classicESPN
@@ -67,26 +68,32 @@ enum StatDropPersonality: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-// MARK: - Stat Drop Context
+// MARK: - Stat Drop Context (Unchanged)
 
 enum StatDropContext: String, Codable {
-    case fullTeam    // Full, long-form analysis
-    case team        // Team card (brief)
-    case offense     // Offense card (brief)
-    case defense     // Defense card (brief)
-    // View-specific:
-    case myTeam
-    case myLeague
-    case matchup
+    case fullTeam    // Full, long-form analysis (MyTeamView, "newspaper")
+    case team        // Team-focused, brief (Team Card)
+    case offense     // Offense-focused, brief (Offense Card)
+    case defense     // Defense-focused, brief (Defense Card)
+    // Add more as needed (e.g. matchup, playoff, league, etc.)
 }
 
-// MARK: - Helper structs
+// MARK: - Focus Enum
+
+enum Focus {
+    case offense
+    case defense
+}
+
+// MARK: - Candidate Struct
 
 struct Candidate {
     let basePos: String
     let fantasy: [String]
     let points: Double
 }
+
+// MARK: - TeamStats Struct
 
 struct TeamStats {
     let pointsFor: Double
@@ -113,6 +120,8 @@ struct TeamStats {
     let leagueStanding: Int
 }
 
+// MARK: - PreviousWeekStats Struct
+
 struct PreviousWeekStats {
     let week: Int
     let actual: Double
@@ -136,187 +145,148 @@ struct PreviousWeekStats {
     var weakDefPos: (String, Double)? { posSums.filter { defensivePositions.contains($0.key) }.min { $0.value < $1.value } }
 }
 
-// MARK: - String helpers
+// MARK: - String Extensions
 
 extension String {
-    var capitalizeFirst: String { prefix(1).capitalized + dropFirst() }
+    var capitalizeFirst: String {
+        prefix(1).capitalized + dropFirst()
+    }
 
     func rangesOfNumbers() -> [NSRange] {
         var ranges: [NSRange] = []
         let regex = try? NSRegularExpression(pattern: "\\d+\\.?\\d*")
         let matches = regex?.matches(in: self, range: NSRange(location: 0, length: utf16.count))
-        for match in matches ?? [] { ranges.append(match.range) }
+        for match in matches ?? [] {
+            ranges.append(match.range)
+        }
         return ranges
     }
 }
 
-// MARK: - StatDropAnalysisGenerator
+// MARK: - Enhanced StatDropAnalysisGenerator
 
 @MainActor final class StatDropAnalysisGenerator {
     static let shared = StatDropAnalysisGenerator()
+
     private init() {}
 
-    /// Main API
+    /// Main API (Unchanged)
     func generate(for team: TeamStanding,
                   league: LeagueData,
                   week: Int,
                   context: StatDropContext,
-                  personality: StatDropPersonality,
-                  opponent: TeamStanding? = nil,
-                  explicitWeek: Int? = nil) -> AttributedString {
+                  personality: StatDropPersonality) -> AttributedString {
         switch context {
-        case .fullTeam, .team:
-            return generateMyTeam(team: team, league: league, week: week, personality: personality)
+        case .fullTeam:
+            return generateFullTeam(team: team, league: league, week: week, personality: personality)
+        case .team:
+            return generateTeamCard(team: team, league: league, week: week, personality: personality)
         case .offense:
             return generateOffenseCard(team: team, league: league, week: week, personality: personality)
         case .defense:
             return generateDefenseCard(team: team, league: league, week: week, personality: personality)
-        case .myTeam:
-            return generateMyTeam(team: team, league: league, week: week, personality: personality)
-        case .myLeague:
-            return generateMyLeague(team: team, league: league, week: week, personality: personality)
-        case .matchup:
-            return generateMatchup(team: team, opponent: opponent, league: league, week: explicitWeek ?? week, personality: personality)
         }
     }
 
-    // MARK: - Context generators
+    // MARK: - Context-specific Generators (Enhanced)
 
-    private func generateMyTeam(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
+    private func generateFullTeam(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
         var analysis = ""
 
         let stats = extractTeamStats(team: team, league: league)
         let allTime = extractAllTimeStats(ownerId: team.ownerId, league: league)
-        let previousWeek = max(1, week - 1)
+        let previousWeek = week - 1
         let weekStats = computeWeekStats(team: team, league: league, week: previousWeek)
 
-        analysis += personalityIntroTeam(team: team, week: week, personality: personality, stats: stats)
+        analysis += personalityIntro(team: team, week: week, personality: personality, stats: stats)
+
         analysis += previousWeekBreakdown(weekStats: weekStats, personality: personality)
+
         analysis += seasonBreakdown(team: team, stats: stats, allTime: allTime, personality: personality)
 
-        if let wk = weekStats {
-            if let top = wk.topPos {
-                analysis += "\n\nMVP Area Last Week: \(top.0) produced \(String(format: \"%.1f\", top.1)) points — keep feeding it."
-            }
-            if let weak = wk.weakOffPos {
-                analysis += "\nBench Watch: \(weak.0) underperformed with \(String(format: \"%.1f\", weak.1)) — consider upgrades."
-            }
-        }
-
-        analysis += lookAheadForTeam(team: team, league: league, week: week, personality: personality, stats: stats)
         analysis += suggestionsAndEncouragement(team: team, personality: personality)
 
         return formatAttributedString(analysis)
     }
 
-    private func generateMyLeague(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
+    private func generateTeamCard(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
         var analysis = ""
+
         let stats = extractTeamStats(team: team, league: league)
-        let teams = league.teams
-        let sortedByPPW = teams.sorted { $0.teamPointsPerWeek > $1.teamPointsPerWeek }
-        let top = sortedByPPW.first
-        let bottom = sortedByPPW.last
-        let avgPPW = teams.map { $0.teamPointsPerWeek }.reduce(0, +) / Double(max(1, teams.count))
+        let previousWeek = week - 1
+        let weekStats = computeWeekStats(team: team, league: league, week: previousWeek)
 
-        analysis += personalityIntroLeague(team: team, league: league, personality: personality, stats: stats)
+        analysis += personalityIntro(team: team, week: week, personality: personality, stats: stats, isBrief: true)
 
-        if let top = top {
-            analysis += "\n\nLeague Leader: \(top.name) is pacing the league at \(String(format: \"%.1f\", top.teamPointsPerWeek)) PPW."
-        }
-        if let bottom = bottom {
-            analysis += " Lagging Team: \(bottom.name) at \(String(format: \"%.1f\", bottom.teamPointsPerWeek)) PPW."
-        }
-        analysis += "\nLeague average PPW: \(String(format: \"%.2f\", avgPPW)). Your team: \(team.name) at \(String(format: \"%.2f\", stats.ppw)) PPW."
+        analysis += previousWeekBreakdown(weekStats: weekStats, personality: personality, isBrief: true)
 
-        let rankByPPW = sortedByPPW.firstIndex(where: { $0.id == team.id })?.advanced(by: 1) ?? team.leagueStanding
-        analysis += "\nYou're roughly ranked \(rankByPPW) by PPW. Strengths vs league: \(Array(stats.positionAverages.keys).sorted().prefix(3).joined(separator: \", \"))."
+        analysis += seasonBreakdown(team: team, stats: stats, allTime: nil, personality: personality, isBrief: true)
 
-        if let champs = league.allTimeOwnerStats?.values.sorted(by: { $0.championships > $1.championships }).first {
-            analysis += "\n\nAll-time leaderboard tease: \(champs.latestDisplayName) leads historically with \(champs.championships) championships."
-        }
-
-        analysis += "\n\nLeague Look-Ahead: Watch teams that are trending upward. Keep an eye on trades and waiver activity."
-        analysis += "\n\nSuggestions: If your team is below league avg PPW, target players with positive recent usage/ppw trends."
+        analysis += suggestionsAndEncouragement(team: team, personality: personality, isBrief: true)
 
         return formatAttributedString(analysis)
     }
 
-    private func generateMatchup(team: TeamStanding, opponent: TeamStanding?, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
+    private func generateOffenseCard(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
         var analysis = ""
+
         let stats = extractTeamStats(team: team, league: league)
-        let teamWeekStats = computeWeekStats(team: team, league: league, week: week)
-        let oppWeekStats = opponent.flatMap { computeWeekStats(team: $0, league: league, week: week) }
-        let oppStats = opponent.flatMap { extractTeamStats(team: $0, league: league) }
-        let headToHead = opponent.flatMap { computeHeadToHeadStats(teamOwnerId: team.ownerId, oppOwnerId: $0.ownerId, league: league) }
+        let previousWeek = week - 1
+        let weekStats = computeWeekStats(team: team, league: league, week: previousWeek)
 
-        analysis += personalityIntroMatchup(team: team, opponent: opponent, week: week, personality: personality, stats: stats)
+        analysis += offenseIntro(team: team, personality: personality, stats: stats)
 
-        if let h2h = headToHead {
-            analysis += "\n\nAll-time vs \(opponent?.name ?? \"Opponent\"): \(h2h.record) — PF: \(String(format: \"%.1f\", h2h.avgPointsFor)) / \(String(format: \"%.1f\", h2h.avgPointsAgainst))."
-        }
+        analysis += offenseWeekBreakdown(weekStats: weekStats, personality: personality)
 
-        if let opp = opponent, let oppS = oppStats {
-            analysis += "\n\nMatchup Snapshot (Week \(week)):"
-            analysis += "\n- Your Offense: \(String(format: \"%.1f\", stats.offensivePPW)) PPW vs Their Defense: \(String(format: \"%.1f\", oppS.defensivePPW)) PPW"
-            analysis += "\n- Your Defense: \(String(format: \"%.1f\", stats.defensivePPW)) PPW vs Their Offense: \(String(format: \"%.1f\", oppS.offensivePPW)) PPW"
-            let proj = projectedWinChance(teamStats: stats, oppStats: oppS)
-            analysis += "\n\nProjection: \(String(format: \"%.0f\", proj*100))% chance to win (heuristic)."
-        } else {
-            analysis += "\n\nUpcoming Matchup: opponent data unavailable — focus on maximizing management and starting hot players."
-        }
+        analysis += offenseSeasonBreakdown(stats: stats, personality: personality)
 
-        if let tw = teamWeekStats {
-            analysis += previousWeekBreakdown(weekStats: tw, personality: personality, isBrief: true)
-        }
-        if let ow = oppWeekStats {
-            analysis += "\n\nOpponent Recap: " + previousWeekBreakdown(weekStats: ow, personality: personality, isBrief: true)
-        }
-
-        switch personality {
-        case .hypeMan:
-            analysis += "\n\nIT'S GAME TIME — BRING THE NOISE AND DOMINATE!"
-        case .snarkyAnalyst:
-            analysis += "\n\nDon't choke. Then again, maybe they will."
-        case .motivationalCoach:
-            analysis += "\n\nTrust the plan. Set your lineup, believe, go win."
-        default:
-            analysis += "\n\nGood luck — lineup smart, win proud."
-        }
+        analysis += offenseSuggestions(team: team, personality: personality)
 
         return formatAttributedString(analysis)
     }
 
-    // MARK: - Computation helpers
+    private func generateDefenseCard(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality) -> AttributedString {
+        var analysis = ""
+
+        let stats = extractTeamStats(team: team, league: league)
+        let previousWeek = week - 1
+        let weekStats = computeWeekStats(team: team, league: league, week: previousWeek)
+
+        analysis += defenseIntro(team: team, personality: personality, stats: stats)
+
+        analysis += defenseWeekBreakdown(weekStats: weekStats, personality: personality)
+
+        analysis += defenseSeasonBreakdown(stats: stats, personality: personality)
+
+        analysis += defenseSuggestions(team: team, personality: personality)
+
+        return formatAttributedString(analysis)
+    }
+
+    // MARK: - Computation Helpers
 
     private func computeWeekStats(team: TeamStanding, league: LeagueData, week: Int) -> PreviousWeekStats? {
         if week < 1 { return nil }
 
         let actual = computeActualPointsForWeek(team: team, week: week)
+
         let max = computeMaxPointsForWeek(team: team, league: league, week: week)
 
         let mgmt = max.total > 0 ? (actual.total / max.total * 100) : 0
+
         let offMgmt = max.off > 0 ? (actual.off / max.off * 100) : 0
+
         let defMgmt = max.def > 0 ? (actual.def / max.def * 100) : 0
 
         let posSums = computePositionSumsForWeek(team: team, week: week)
+
         let leaguePoints = computeLeagueWeekPoints(league: league, week: week)
+
         let sorted = leaguePoints.sorted { $0.value > $1.value }
 
         if let idx = sorted.firstIndex(where: { $0.key == team.id }) {
             let rank = idx + 1
-            return PreviousWeekStats(week: week,
-                                     actual: actual.total,
-                                     max: max.total,
-                                     mgmt: mgmt,
-                                     offActual: actual.off,
-                                     offMax: max.off,
-                                     offMgmt: offMgmt,
-                                     defActual: actual.def,
-                                     defMax: max.def,
-                                     defMgmt: defMgmt,
-                                     posSums: posSums,
-                                     leagueRank: rank,
-                                     numTeams: league.teams.count)
+            return PreviousWeekStats(week: week, actual: actual.total, max: max.total, mgmt: mgmt, offActual: actual.off, offMax: max.off, offMgmt: offMgmt, defActual: actual.def, defMax: max.def, defMgmt: defMgmt, posSums: posSums, leagueRank: rank, numTeams: league.teams.count)
         }
 
         return nil
@@ -332,16 +302,16 @@ extension String {
                 if let player = team.roster.first(where: { $0.id == id }), let score = player.weeklyScores.first(where: { $0.week == week }) {
                     let pts = score.points
                     total += pts
-                    let pos = PositionNormalizer.normalize(player.position)
-                    if offensivePositions.contains(pos) {
+                    if offensivePositions.contains(player.position) {
                         off += pts
-                    } else if defensivePositions.contains(pos) {
+                    } else if defensivePositions.contains(player.position) {
                         def += pts
                     }
                 }
             }
         } else if let pts = team.weeklyActualLineupPoints?[week] {
             total = pts
+            // off and def not computable without starters, remain 0
         }
 
         return (total, off, def)
@@ -351,9 +321,7 @@ extension String {
         let slots = league.startingLineup
         var candidates: [Candidate] = team.roster.compactMap({ player in
             if let score = player.weeklyScores.first(where: { $0.week == week }) {
-                let base = PositionNormalizer.normalize(player.position)
-                let fantasy = (player.altPositions ?? []).map { PositionNormalizer.normalize($0) }
-                return Candidate(basePos: base, fantasy: fantasy, points: score.points)
+                return Candidate(basePos: player.position, fantasy: player.altPositions ?? [], points: score.points)
             }
             return nil
         })
@@ -365,22 +333,22 @@ extension String {
 
         for slot in slots {
             var pickIdx: Int? = nil
-            var maxP = -Double.infinity
+            var maxP = -1.0
             for (i, c) in candidates.enumerated() {
                 if !used.contains(i) && isEligible(c: c, allowed: allowedPositions(for: slot)) && c.points > maxP {
                     maxP = c.points
                     pickIdx = i
                 }
             }
+
             if let idx = pickIdx {
                 used.insert(idx)
                 let c = candidates[idx]
                 totalMax += c.points
                 let counted = SlotPositionAssigner.countedPosition(for: slot, candidatePositions: c.fantasy, base: c.basePos)
-                let norm = PositionNormalizer.normalize(counted)
-                if offensivePositions.contains(norm) {
+                if offensivePositions.contains(counted) {
                     offMax += c.points
-                } else if defensivePositions.contains(norm) {
+                } else if defensivePositions.contains(counted) {
                     defMax += c.points
                 }
             }
@@ -394,8 +362,7 @@ extension String {
         if let starters = team.actualStartersByWeek?[week] {
             for id in starters {
                 if let player = team.roster.first(where: { $0.id == id }), let score = player.weeklyScores.first(where: { $0.week == week }) {
-                    let norm = PositionNormalizer.normalize(player.position)
-                    dict[norm, default: 0] += score.points
+                    dict[player.position, default: 0] += score.points
                 }
             }
         }
@@ -429,7 +396,19 @@ extension String {
         }
     }
 
-    // MARK: - Extraction helpers
+    private func isIDPFlex(_ slot: String) -> Bool {
+        let u = slot.uppercased()
+        return u.contains("IDP") && u != "DL" && u != "LB" && u != "DB"
+    }
+
+    private func countedPosition(for slot: String, candidatePositions: [String], base: String) -> String {
+        let u = slot.uppercased()
+        if ["DL", "LB", "DB"].contains(u) { return u }
+        if isIDPFlex(u) || offensiveFlexSlots.contains(u) { return candidatePositions.first ?? base }
+        return base
+    }
+
+    // MARK: - Extraction Helpers
 
     private func extractTeamStats(team: TeamStanding, league: LeagueData) -> TeamStats {
         let totalPpw = league.teams.reduce(0.0) { $0 + $1.teamPointsPerWeek }
@@ -465,96 +444,33 @@ extension String {
         league.allTimeOwnerStats?[ownerId]
     }
 
-    private func computeHeadToHeadStats(teamOwnerId: String, oppOwnerId: String, league: LeagueData) -> H2HStats? {
-        guard let agg = league.allTimeOwnerStats?[teamOwnerId], let h2h = agg.headToHeadVs[oppOwnerId] else { return nil }
-        return h2h
-    }
+    // MARK: - Phrase Builders
 
-    private func projectedWinChance(teamStats: TeamStats, oppStats: TeamStats) -> Double {
-        let ppwDiff = teamStats.ppw - oppStats.ppw
-        let mgmtDiff = teamStats.managementPercent - oppStats.managementPercent
-        let wPPW = 0.7
-        let wMgmt = 0.3
-        let raw = (ppwDiff * wPPW) + (mgmtDiff/100.0 * (wMgmt * 10.0))
-        let base: Double = 0.5
-        let scaled = base + (raw / max(1.0, abs(teamStats.ppw) + abs(oppStats.ppw)))
-        return min(max(scaled, 0.02), 0.98)
-    }
-
-    // MARK: - Phrase builders / look-ahead
-
-    private func personalityIntroTeam(team: TeamStanding, week: Int, personality: StatDropPersonality, stats: TeamStats, isBrief: Bool = false) -> String {
-        let intro = "Week \(week) Stat Drop — \(team.name):"
+    private func personalityIntro(team: TeamStanding, week: Int, personality: StatDropPersonality, stats: TeamStats, isBrief: Bool = false) -> String {
+        let intro = "Week \(week) Stat Drop for \(team.name):"
         switch personality {
-        case .classicESPN: return "\(intro) Here's your team-focused breakdown."
-        case .hypeMan: return "\(intro.uppercased()) READY TO RUMBLE!"
-        case .snarkyAnalyst: return "\(intro) Let's see what you forgot to bench this week."
-        case .oldSchoolRadio: return "\(intro) Tune in for the team's report."
-        case .statGeek: return "\(intro) Numbers incoming."
-        case .motivationalCoach: return "\(intro) Time to level up!"
-        case .britishCommentator: return "\(intro) A refined appraisal."
-        case .localNews: return "\(intro) Neighborhood scoreboard."
-        case .dramatic: return "\(intro) THE WEEK AWAITS!"
-        case .robotAI: return "\(intro) Processing team telemetry."
+        case .classicESPN:
+            return "\(intro) Let's dive into the numbers."
+        case .hypeMan:
+            return "\(intro.uppercased()) LET'S GET HYPED!"
+        case .snarkyAnalyst:
+            return "\(intro) Buckle up for disappointment."
+        case .oldSchoolRadio:
+            return "\(intro) Gather 'round the radio, folks."
+        case .statGeek:
+            return "\(intro) Time for some deep stats."
+        case .motivationalCoach:
+            return "\(intro) You've got the power!"
+        case .britishCommentator:
+            return "\(intro) Quite the show."
+        case .localNews:
+            return "\(intro) Community update."
+        case .dramatic:
+            return "\(intro) THE DRAMA UNFOLDS!"
+        case .robotAI:
+            return "\(intro) Initializing analysis."
         }
     }
-
-    private func personalityIntroLeague(team: TeamStanding, league: LeagueData, personality: StatDropPersonality, stats: TeamStats) -> String {
-        let intro = "League Stat Drop — \(league.name):"
-        switch personality {
-        case .classicESPN: return "\(intro) League-wide highlights and where you fit in."
-        case .hypeMan: return "\(intro.uppercased()) WHO'S ON TOP?!"
-        case .snarkyAnalyst: return "\(intro) Leagues are just drama with spreadsheets."
-        case .oldSchoolRadio: return "\(intro) League dispatches."
-        case .statGeek: return "\(intro) Aggregated metrics incoming."
-        case .motivationalCoach: return "\(intro) See how you stack up, champ."
-        case .britishCommentator: return "\(intro) A genteel overview."
-        case .localNews: return "\(intro) Community highlights."
-        case .dramatic: return "\(intro) EPIC LEAGUE TALES!"
-        case .robotAI: return "\(intro) Aggregating league telemetry."
-        }
-    }
-
-    private func personalityIntroMatchup(team: TeamStanding, opponent: TeamStanding?, week: Int, personality: StatDropPersonality, stats: TeamStats) -> String {
-        let oppName = opponent?.name ?? "Opponent"
-        let intro = "Matchup Preview — Week \(week): \(team.name) vs \(oppName):"
-        switch personality {
-        case .classicESPN: return "\(intro) Quick preview and key numbers."
-        case .hypeMan: return "\(intro.uppercased()) TIME TO DOMINATE!"
-        case .snarkyAnalyst: return "\(intro) Don't embarrass yourself. Or do, it's entertaining."
-        case .oldSchoolRadio: return "\(intro) A proper matchup preview."
-        case .statGeek: return "\(intro) Head-to-head metrics forthcoming."
-        case .motivationalCoach: return "\(intro) Execute the plan and win!"
-        case .britishCommentator: return "\(intro) A most engaging duel."
-        case .localNews: return "\(intro) Your town vs theirs."
-        case .dramatic: return "\(intro) BATTLE OF LEGENDS!"
-        case .robotAI: return "\(intro) Calculating outcome probabilities."
-        }
-    }
-
-    private func lookAheadForTeam(team: TeamStanding, league: LeagueData, week: Int, personality: StatDropPersonality, stats: TeamStats) -> String {
-        let trendNote: String
-        if stats.managementPercent > 85 {
-            trendNote = "Your lineup management is elite — expect consistent scoring."
-        } else if stats.managementPercent < 65 {
-            trendNote = "Lineup efficiency low — tidy the roster and expect risk."
-        } else {
-            trendNote = "Management is solid; marginal gains on rosters and trades may pay off."
-        }
-
-        let expected = String(format: "%.0f", stats.ppw * 1.05 + 0.5)
-        var look = "\n\nLook-Ahead: With current usage, expect roughly \(expected) points next week (heuristic). \(trendNote)"
-
-        switch personality {
-        case .hypeMan: look += " GET READY — BIG WEEK AHEAD!"
-        case .snarkyAnalyst: look += " Or don't do anything and be surprised."
-        case .motivationalCoach: look += " You can make it happen — tweak the bench!"
-        default: break
-        }
-        return look
-    }
-
-    // MARK: - Phrase builders reused from original style
 
     private func previousWeekBreakdown(weekStats: PreviousWeekStats?, personality: StatDropPersonality, isBrief: Bool = false) -> String {
         guard let stats = weekStats else { return "\n\nNo data for previous week." }
@@ -564,27 +480,38 @@ extension String {
         let maxStr = String(format: "%.1f", stats.max)
         let mgmtStr = String(format: "%.0f%%", stats.mgmt)
         let rankStr = "\(stats.leagueRank) out of \(stats.numTeams)"
-        let topStr = stats.topPos.map { "\($0) shining with \(String(format: \"%.1f\", $1)) pts" } ?? "no standout position"
-        let weakStr = stats.weakPos.map { "\($0) struggling with \(String(format: \"%.1f\", $1)) pts" } ?? "no weak position"
+        let topStr = stats.topPos.map { "\($0) shining with \(String(format: "%.1f", $1)) pts" } ?? "no standout position"
+        let weakStr = stats.weakPos.map { "\($0) struggling with \(String(format: "%.1f", $1)) pts" } ?? "no weak position"
         let offMgmtStr = String(format: "%.0f%%", stats.offMgmt)
         let defMgmtStr = String(format: "%.0f%%", stats.defMgmt)
 
-        let fullText = "Scored \(actualStr) points out of a possible \(maxStr), for a management efficiency of \(mgmtStr). Offense management \(offMgmtStr), defense \(defMgmtStr). That performance put you \(rankStr) in the weekly standings. Top area: \(topStr). Weak area: \(weakStr)."
+        let fullText = "Scored \(actualStr) points out of a possible \(maxStr), for a management efficiency of \(mgmtStr). Offense management \(offMgmtStr), defense \(defMgmtStr). That performance ranked you \(rankStr) in the league. Top position was \(topStr), while weakest was \(weakStr)."
+
         let briefText = "Week \(week): \(actualStr) pts (\(mgmtStr) mgmt, off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Top: \(topStr); Weak: \(weakStr)."
 
         let text = isBrief ? briefText : fullText
 
         switch personality {
-        case .classicESPN: return "\n\nPrevious Week (Week \(week)): \(text)"
-        case .hypeMan: return "\n\nWEEK \(week) RECAP: \(actualStr) PTS OF \(maxStr)! MGMT \(mgmtStr) — BEAST MODE! RANK \(rankStr)! \(topStr.uppercased())."
-        case .snarkyAnalyst: return "\n\nLast week (Week \(week)): Only \(actualStr) when \(maxStr) was possible. \(mgmtStr) management. Ranked \(rankStr). \(topStr). \(weakStr)."
-        case .oldSchoolRadio: return "\n\nIn Week \(week), you tallied \(actualStr) points, potential \(maxStr). Management \(mgmtStr), off \(offMgmtStr), def \(defMgmtStr), rank \(rankStr). \(topStr.capitalizeFirst)."
-        case .statGeek: return "\n\nWeek \(week) stats: \(actualStr)/\(maxStr) pts, \(mgmtStr) efficiency (off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Top: \(topStr), bottom: \(weakStr)."
-        case .motivationalCoach: return "\n\nWeek \(week): Great effort with \(actualStr) pts (\(mgmtStr) mgmt). Build on \(topStr), improve \(weakStr)!"
-        case .britishCommentator: return "\n\nWeek \(week): \(actualStr) points from \(maxStr), \(mgmtStr) management (off \(offMgmtStr), def \(defMgmtStr)). Jolly good \(topStr), a bit off \(weakStr)."
-        case .localNews: return "\n\nLocal recap for Week \(week): \(actualStr) pts, \(mgmtStr) mgmt. Highlights: \(topStr), needs work: \(weakStr)."
-        case .dramatic: return "\n\nTHE TRAGEDY/GLORY OF WEEK \(week): \(actualStr) POINTS / \(maxStr)! MANAGEMENT \(mgmtStr)! \(topStr.uppercased()). \(weakStr.uppercased())."
-        case .robotAI: return "\n\nWeek \(week) data: Points \(actualStr)/\(maxStr), management \(mgmtStr) (off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Top \(topStr), weak \(weakStr)."
+        case .classicESPN:
+            return "\n\nPrevious Week (Week \(week)): \(text)"
+        case .hypeMan:
+            return "\n\nWEEK \(week) RECAP: SMASHED \(actualStr) PTS OUTTA \(maxStr)! MGMT \(mgmtStr), OFF \(offMgmtStr), DEF \(defMgmtStr) - BEAST MODE! RANK \(rankStr) - TOP DOG! \(topStr.uppercased()), \(weakStr.uppercased()) - UPGRADE!"
+        case .snarkyAnalyst:
+            return "\n\nLast week (Week \(week)): Only \(actualStr) when \(maxStr) was possible. \(mgmtStr) management, off \(offMgmtStr), def \(defMgmtStr) - could do better. Ranked \(rankStr). \(topStr) was decent, \(weakStr) was laughable."
+        case .oldSchoolRadio:
+            return "\n\nIn Week \(week), you tallied \(actualStr) points, potential \(maxStr). Management \(mgmtStr), off \(offMgmtStr), def \(defMgmtStr), rank \(rankStr). \(topStr.capitalizeFirst), \(weakStr)."
+        case .statGeek:
+            return "\n\nWeek \(week) stats: \(actualStr)/\(maxStr) pts, \(mgmtStr) efficiency (off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Top: \(topStr), bottom: \(weakStr)."
+        case .motivationalCoach:
+            return "\n\nWeek \(week): Great effort with \(actualStr) pts (\(mgmtStr) mgmt, off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Build on \(topStr), improve \(weakStr)!"
+        case .britishCommentator:
+            return "\n\nWeek \(week): \(actualStr) points from \(maxStr), \(mgmtStr) management (off \(offMgmtStr), def \(defMgmtStr)). Position \(rankStr). Jolly good \(topStr), a bit off \(weakStr)."
+        case .localNews:
+            return "\n\nLocal recap for Week \(week): \(actualStr) pts, \(mgmtStr) mgmt (off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Highlights \(topStr), needs work \(weakStr)."
+        case .dramatic:
+            return "\n\nTHE TRAGEDY OF WEEK \(week): \(actualStr) POINTS AGAINST FATE'S \(maxStr)! \(mgmtStr) DESTINY (OFF \(offMgmtStr), DEF \(defMgmtStr))! RANK \(rankStr)! \(topStr.uppercased()) GLORY, \(weakStr.uppercased()) DESPAIR!"
+        case .robotAI:
+            return "\n\nWeek \(week) data: Points \(actualStr)/\(maxStr), management \(mgmtStr) (off \(offMgmtStr), def \(defMgmtStr)), rank \(rankStr). Top \(topStr), weak \(weakStr)."
         }
     }
 
@@ -594,11 +521,11 @@ extension String {
         let mgmt = String(format: "%.0f%%", stats.managementPercent)
         let ppw = String(format: "%.1f", stats.ppw)
         let vsLg = stats.ppw > stats.leagueAvgPpw ? "above league average" : "below league average"
-        let streakStr: String = {
-            if let ws = team.winStreak, ws > 1 { return "on a hot \(ws)-win streak" }
-            if let ls = team.lossStreak, ls > 1 { return "stuck in a \(ls)-loss rut - time to break free" }
-            return "steady as she goes"
-        }()
+        let streakStr = if let ws = team.winStreak, ws > 1 {
+            "on a hot \(ws)-win streak"
+        } else if let ls = team.lossStreak, ls > 1 {
+            "stuck in a \(ls)-loss rut - time to break free"
+        } else { "steady as she goes" }
         let offMgmt = String(format: "%.0f%%", stats.offensiveManagementPercent)
         let offPPW = String(format: "%.1f", stats.offensivePPW)
         let defMgmt = String(format: "%.0f%%", stats.defensiveManagementPercent)
@@ -606,50 +533,313 @@ extension String {
         let strengths = stats.strengths?.joined(separator: ", ") ?? "none apparent"
         let weaknesses = stats.weaknesses?.joined(separator: ", ") ?? "none glaring"
         let rival = team.biggestRival ?? "yourself"
-        let allTimeStr = allTime.map { "Historically, \($0.championships) championships and a \($0.recordString) record." } ?? ""
+        let allTimeStr = if let at = allTime {
+            "Historically, \(at.championships) championships and a \(at.recordString) record."
+        } else { "" }
 
-        let fullText = "Currently \(standing)th in the league with a \(record) record. Overall management at \(mgmt), averaging \(ppw) PPW (\(vsLg)). \(streakStr.capitalizeFirst). Offense running at \(offPPW) PPW with \(offMgmt) mgmt; Defense \(defPPW) PPW with \(defMgmt) mgmt. Strengths: \(strengths). Weaknesses: \(weaknesses). Rival: \(rival). \(allTimeStr)"
-        let briefText = "\(standing)th place, \(record), mgmt \(mgmt), PPW \(ppw) (\(vsLg)). \(streakStr). Off \(offPPW)/\(offMgmt), Def \(defPPW)/\(defMgmt). Strengths: \(strengths)."
+        let fullText = "Currently \(standing)th in the league with a \(record) record. Overall management at \(mgmt), averaging \(ppw) PPW (\(vsLg)). \(streakStr.capitalizeFirst). Offense running at \(offMgmt) management, \(offPPW) PPW; defense at \(defMgmt), \(defPPW) PPW. Strengths in \(strengths), weaknesses in \(weaknesses). Biggest rival: \(rival). \(allTimeStr)"
+
+        let briefText = "\(standing)th place, \(record), mgmt \(mgmt), PPW \(ppw) (\(vsLg)). \(streakStr). Off \(offPPW)/\(offMgmt), Def \(defPPW)/\(defMgmt). Strengths \(strengths), weaknesses \(weaknesses)."
 
         let text = isBrief ? briefText : fullText
 
         switch personality {
-        case .classicESPN: return "\n\nFull Season Breakdown: \(text)"
-        case .hypeMan: return "\n\nSEASON SO FAR: \(standing)TH WITH \(record)! MGMT \(mgmt)! PPW \(ppw) \(vsLg.uppercased())! \(streakStr.uppercased())!"
-        case .snarkyAnalyst: return "\n\nSeason summary: Hanging at \(standing)th with \(record). Management \(mgmt). PPW \(ppw) (\(vsLg)). \(streakStr)."
-        case .oldSchoolRadio: return "\n\nThe season thus far: Holding \(standing)th spot, record \(record). Management \(mgmt), PPW \(ppw) \(vsLg). \(streakStr.capitalizeFirst)."
-        case .statGeek: return "\n\nSeason stats: Rank \(standing), record \(record), mgmt \(mgmt)%, PPW \(ppw) (\(vsLg)). \(streakStr)."
-        case .motivationalCoach: return "\n\nSeason progress: You're in \(standing)th with \(record) — keep the momentum! \(streakStr.capitalizeFirst)."
-        case .britishCommentator: return "\n\nSeason to date: Position \(standing), record \(record). Management \(mgmt), PPW \(ppw) \(vsLg)."
-        case .localNews: return "\n\nCommunity season update: \(standing)th place, \(record) record. Mgmt \(mgmt), \(ppw) PPW \(vsLg)."
-        case .dramatic: return "\n\nTHE GRAND SEASON EPIC: THRONE AT \(standing)TH, RECORD \(record)! MGMT \(mgmt)! PPW \(ppw)!"
-        case .robotAI: return "\n\nSeason data: Rank \(standing), record \(record), management \(mgmt)%, PPW \(ppw) (\(vsLg))."
+        case .classicESPN:
+            return "\n\nFull Season Breakdown: \(text)"
+        case .hypeMan:
+            return "\n\nSEASON SO FAR: \(standing)TH WITH \(record)! MGMT \(mgmt) - CRUSHING! PPW \(ppw) \(vsLg.uppercased())! \(streakStr.uppercased())! OFF \(offPPW) \(offMgmt), DEF \(defPPW) \(defMgmt)! STRENGTHS \(strengths.uppercased()), FIX \(weaknesses.uppercased())! RIVAL \(rival.uppercased())! \(allTimeStr.uppercased())"
+        case .snarkyAnalyst:
+            return "\n\nSeason summary: Languishing in \(standing)th with \(record). Management \(mgmt) - adequate at best. PPW \(ppw), \(vsLg) - big deal. \(streakStr). Off \(offMgmt), def \(defMgmt) - predictable. Strengths? \(strengths). Weaknesses: \(weaknesses). Rival \(rival)? Please. \(allTimeStr)"
+        case .oldSchoolRadio:
+            return "\n\nThe season thus far: Holding \(standing)th spot, record \(record). Management \(mgmt), PPW \(ppw) \(vsLg). \(streakStr.capitalizeFirst). Offense \(offPPW) PPW at \(offMgmt), defense \(defPPW) at \(defMgmt). Strong in \(strengths), weak in \(weaknesses). Rival is \(rival). \(allTimeStr)"
+        case .statGeek:
+            return "\n\nSeason stats: Rank \(standing), record \(record), mgmt \(mgmt)%, PPW \(ppw) (\(vsLg)). Streak: \(streakStr). Off: \(offPPW) PPW \(offMgmt)%, Def: \(defPPW) \(defMgmt)%. Strengths \(strengths), weaknesses \(weaknesses). Rival \(rival). \(allTimeStr)"
+        case .motivationalCoach:
+            return "\n\nSeason progress: You're in \(standing)th with \(record) - solid foundation! Management \(mgmt), PPW \(ppw) \(vsLg). \(streakStr.capitalizeFirst) - keep the fire! Offense \(offPPW) at \(offMgmt), defense \(defPPW) at \(defMgmt). Lean on strengths \(strengths), address \(weaknesses). Rival \(rival) - beat 'em! \(allTimeStr)"
+        case .britishCommentator:
+            return "\n\nSeason to date: Position \(standing), record \(record). Management \(mgmt), PPW \(ppw) \(vsLg). \(streakStr). Offence \(offPPW) at \(offMgmt), defence \(defPPW) at \(defMgmt). Strong points \(strengths), weak spots \(weaknesses). Rival \(rival). \(allTimeStr)"
+        case .localNews:
+            return "\n\nCommunity season update: \(standing)th place, \(record) record. Mgmt \(mgmt), \(ppw) PPW \(vsLg). \(streakStr). Off \(offPPW) \(offMgmt), Def \(defPPW) \(defMgmt). Strengths \(strengths), work on \(weaknesses). Local rival \(rival). \(allTimeStr)"
+        case .dramatic:
+            return "\n\nTHE GRAND SEASON EPIC: THRONE AT \(standing)TH, RECORD \(record)! MGMT \(mgmt) - FATE'S HAND! PPW \(ppw) \(vsLg.uppercased())! \(streakStr.uppercased())! OFFENSE SAGA \(offPPW) \(offMgmt), DEFENSE LEGEND \(defPPW) \(defMgmt)! STRENGTHS \(strengths.uppercased()), WEAKNESSES \(weaknesses.uppercased())! RIVAL NEMESIS \(rival.uppercased())! \(allTimeStr.uppercased())"
+        case .robotAI:
+            return "\n\nSeason data: Rank \(standing), record \(record), management \(mgmt)%, PPW \(ppw) (\(vsLg)). Streak \(streakStr). Off \(offPPW) \(offMgmt)%, Def \(defPPW) \(defMgmt)%. Strengths \(strengths), weaknesses \(weaknesses). Rival \(rival). \(allTimeStr)"
         }
     }
 
     private func suggestionsAndEncouragement(team: TeamStanding, personality: StatDropPersonality, isBrief: Bool = false) -> String {
         let standing = team.leagueStanding
         let weaknesses = team.weaknesses?.joined(separator: ", ") ?? ""
-        let suggestion = !weaknesses.isEmpty ? "Consider waivers/trades to improve: \(weaknesses)." : "Roster looks balanced — maintain."
-        let encouragement = standing <= (team.league?.teams.count ?? 12) / 2 ? "You're in contention — push for the playoffs!" : "Plenty of games left — stage a comeback!"
+        let suggestion = !weaknesses.isEmpty ? "Hit the waivers or make trades for \(weaknesses) to bolster your roster." : "Your team looks balanced - maintain the course."
+        let encouragement = standing <= (team.league?.teams.count ?? 12) / 2 ? "You're in contention - push for the playoffs!" : "Plenty of games left - stage a comeback!"
+        let fullText = "\(suggestion) \(encouragement)"
+        let briefText = "\(suggestion) \(encouragement)"
 
-        let text = "\(suggestion) \(encouragement)"
+        let text = isBrief ? briefText : fullText
 
         switch personality {
-        case .classicESPN: return "\n\nLooking ahead: \(text)"
-        case .hypeMan: return "\n\nNEXT MOVES: \(suggestion.uppercased()) \(encouragement.uppercased())"
-        case .snarkyAnalyst: return "\n\nSuggestions: \(suggestion) Or ignore — drama is entertaining."
-        case .oldSchoolRadio: return "\n\nForward thinking: \(suggestion) \(encouragement)"
-        case .statGeek: return "\n\nOptimal moves: \(suggestion) \(encouragement)"
-        case .motivationalCoach: return "\n\nGame plan: \(suggestion) \(encouragement) You can do it!"
-        case .britishCommentator: return "\n\nRecommendations: \(suggestion) \(encouragement)"
-        case .localNews: return "\n\nCommunity tips: \(suggestion) \(encouragement)"
-        case .dramatic: return "\n\nTHE CLIMAX APPROACHES: \(suggestion.uppercased()) \(encouragement.uppercased())"
-        case .robotAI: return "\n\nComputed advice: \(suggestion) \(encouragement)"
+        case .classicESPN:
+            return "\n\nLooking ahead: \(text)"
+        case .hypeMan:
+            return "\n\nNEXT MOVES: GRAB WAIVERS/TRADES FOR \(weaknesses.uppercased()) - LEVEL UP! \(encouragement.uppercased()) GO GET 'EM!"
+        case .snarkyAnalyst:
+            return "\n\nSuggestions: \(suggestion) As if that'll help. \(encouragement) Or don't, whatever."
+        case .oldSchoolRadio:
+            return "\n\nForward thinking: \(suggestion) \(encouragement) Like the good old days."
+        case .statGeek:
+            return "\n\nOptimal moves: \(suggestion) \(encouragement) Statistically speaking."
+        case .motivationalCoach:
+            return "\n\nGame plan: \(suggestion) \(encouragement) You can do it!"
+        case .britishCommentator:
+            return "\n\nRecommendations: \(suggestion) \(encouragement) Cheerio."
+        case .localNews:
+            return "\n\nCommunity tips: \(suggestion) \(encouragement) Stay strong."
+        case .dramatic:
+            return "\n\nTHE CLIMAX APPROACHES: \(suggestion.uppercased())! \(encouragement.uppercased()) DESTINY AWAITS!"
+        case .robotAI:
+            return "\n\nComputed advice: \(suggestion) \(encouragement)"
         }
     }
 
-    // MARK: - Formatting
+    private func offenseWeekBreakdown(weekStats: PreviousWeekStats?, personality: StatDropPersonality) -> String {
+        guard let stats = weekStats else { return "" }
+
+        let week = stats.week
+        let actualStr = String(format: "%.1f", stats.offActual)
+        let mgmtStr = String(format: "%.0f%%", stats.offMgmt)
+        let topStr = stats.topOffPos.map { "\($0) with \(String(format: "%.1f", $1)) pts" } ?? "no standout"
+        let weakStr = stats.weakOffPos.map { "\($0) with \(String(format: "%.1f", $1)) pts" } ?? "no weak"
+
+        let text = "Offense scored \(actualStr) points, management \(mgmtStr). Top \(topStr), weak \(weakStr)."
+
+        switch personality {
+        case .classicESPN:
+            return "\nPrevious Week Offense (Week \(week)): \(text)"
+        case .hypeMan:
+            return "\nOFF WEEK \(week): \(actualStr) PTS, \(mgmtStr) MGMT! TOP \(topStr.uppercased()), FIX \(weakStr.uppercased())!"
+        case .snarkyAnalyst:
+            return "\nOffense last week: \(actualStr) pts, \(mgmtStr). \(topStr) okay, \(weakStr) pathetic."
+        case .oldSchoolRadio:
+            return "\nOffense in Week \(week): \(text)"
+        case .statGeek:
+            return "\nOffense Week \(week): \(actualStr) pts, \(mgmtStr). Top \(topStr), bottom \(weakStr)."
+        case .motivationalCoach:
+            return "\nOffense Week \(week): \(actualStr) pts, \(mgmtStr). Build on \(topStr), improve \(weakStr)!"
+        case .britishCommentator:
+            return "\nOffence Week \(week): \(text)"
+        case .localNews:
+            return "\nLocal offense Week \(week): \(text)"
+        case .dramatic:
+            return "\nOFFENSE DRAMA WEEK \(week): \(actualStr) PTS, \(mgmtStr)! \(topStr.uppercased()), \(weakStr.uppercased())!"
+        case .robotAI:
+            return "\nOffense Week \(week): \(actualStr) pts, \(mgmtStr). Top \(topStr), weak \(weakStr)."
+        }
+    }
+
+    private func defenseWeekBreakdown(weekStats: PreviousWeekStats?, personality: StatDropPersonality) -> String {
+        guard let stats = weekStats else { return "" }
+
+        let week = stats.week
+        let actualStr = String(format: "%.1f", stats.defActual)
+        let mgmtStr = String(format: "%.0f%%", stats.defMgmt)
+        let topStr = stats.topDefPos.map { "\($0) with \(String(format: "%.1f", $1)) pts" } ?? "no standout"
+        let weakStr = stats.weakDefPos.map { "\($0) with \(String(format: "%.1f", $1)) pts" } ?? "no weak"
+
+        let text = "Defense scored \(actualStr) points, management \(mgmtStr). Top \(topStr), weak \(weakStr)."
+
+        switch personality {
+        case .classicESPN:
+            return "\nPrevious Week Defense (Week \(week)): \(text)"
+        case .hypeMan:
+            return "\nDEF WEEK \(week): \(actualStr) PTS, \(mgmtStr) MGMT! TOP \(topStr.uppercased()), FIX \(weakStr.uppercased())!"
+        case .snarkyAnalyst:
+            return "\nDefense last week: \(actualStr) pts, \(mgmtStr). \(topStr) passable, \(weakStr) disastrous."
+        case .oldSchoolRadio:
+            return "\nDefense in Week \(week): \(text)"
+        case .statGeek:
+            return "\nDefense Week \(week): \(actualStr) pts, \(mgmtStr). Top \(topStr), bottom \(weakStr)."
+        case .motivationalCoach:
+            return "\nDefense Week \(week): \(actualStr) pts, \(mgmtStr). Strengthen \(weakStr), celebrate \(topStr)!"
+        case .britishCommentator:
+            return "\nDefence Week \(week): \(text)"
+        case .localNews:
+            return "\nLocal defense Week \(week): \(text)"
+        case .dramatic:
+            return "\nDEFENSE EPIC WEEK \(week): \(actualStr) PTS, \(mgmtStr)! \(topStr.uppercased()), \(weakStr.uppercased())!"
+        case .robotAI:
+            return "\nDefense Week \(week): \(actualStr) pts, \(mgmtStr). Top \(topStr), weak \(weakStr)."
+        }
+    }
+
+    private func offenseSeasonBreakdown(stats: TeamStats, personality: StatDropPersonality) -> String {
+        let mgmt = String(format: "%.0f%%", stats.offensiveManagementPercent)
+        let ppw = String(format: "%.1f", stats.offensivePPW)
+        let strengths = stats.offensiveStrengths?.joined(separator: ", ") ?? "--"
+        let weaknesses = stats.offensiveWeaknesses?.joined(separator: ", ") ?? "--"
+
+        let text = "Offense management \(mgmt), PPW \(ppw). Strengths \(strengths), weaknesses \(weaknesses)."
+
+        switch personality {
+        case .classicESPN:
+            return "\nSeason Offense: \(text)"
+        case .hypeMan:
+            return "\nOFF SEASON: MGMT \(mgmt), PPW \(ppw)! STRENGTHS \(strengths.uppercased()), FIX \(weaknesses.uppercased())!"
+        case .snarkyAnalyst:
+            return "\nOffense season: \(mgmt) mgmt, \(ppw) PPW. Strengths \(strengths)? Sure. Weaknesses \(weaknesses) - obvious."
+        case .oldSchoolRadio:
+            return "\nOffense season: \(text)"
+        case .statGeek:
+            return "\nOffense season: \(mgmt)%, \(ppw) PPW. Strengths \(strengths), weaknesses \(weaknesses)."
+        case .motivationalCoach:
+            return "\nOffense season: \(mgmt) mgmt, \(ppw) PPW. Capitalize on \(strengths), improve \(weaknesses)!"
+        case .britishCommentator:
+            return "\nOffence season: \(text)"
+        case .localNews:
+            return "\nLocal offense season: \(text)"
+        case .dramatic:
+            return "\nOFFENSE SEASON SAGA: \(mgmt) MGMT, \(ppw) PPW! STRENGTHS \(strengths.uppercased()), WEAKNESSES \(weaknesses.uppercased())!"
+        case .robotAI:
+            return "\nOffense season: \(mgmt)%, \(ppw) PPW. Strengths \(strengths), weaknesses \(weaknesses)."
+        }
+    }
+
+    private func defenseSeasonBreakdown(stats: TeamStats, personality: StatDropPersonality) -> String {
+        let mgmt = String(format: "%.0f%%", stats.defensiveManagementPercent)
+        let ppw = String(format: "%.1f", stats.defensivePPW)
+        let strengths = stats.defensiveStrengths?.joined(separator: ", ") ?? "--"
+        let weaknesses = stats.defensiveWeaknesses?.joined(separator: ", ") ?? "--"
+
+        let text = "Defense management \(mgmt), PPW \(ppw). Strengths \(strengths), weaknesses \(weaknesses)."
+
+        switch personality {
+        case .classicESPN:
+            return "\nSeason Defense: \(text)"
+        case .hypeMan:
+            return "\nDEF SEASON: MGMT \(mgmt), PPW \(ppw)! STRENGTHS \(strengths.uppercased()), FIX \(weaknesses.uppercased())!"
+        case .snarkyAnalyst:
+            return "\nDefense season: \(mgmt) mgmt, \(ppw) PPW. Strengths \(strengths), weaknesses \(weaknesses) - shocking."
+        case .oldSchoolRadio:
+            return "\nDefense season: \(text)"
+        case .statGeek:
+            return "\nDefense season: \(mgmt)%, \(ppw) PPW. Strengths \(strengths), weaknesses \(weaknesses)."
+        case .motivationalCoach:
+            return "\nDefense season: \(mgmt) mgmt, \(ppw) PPW. Fortify \(weaknesses), celebrate \(strengths)!"
+        case .britishCommentator:
+            return "\nDefence season: \(text)"
+        case .localNews:
+            return "\nLocal defense season: \(text)"
+        case .dramatic:
+            return "\nDEFENSE SEASON LEGEND: \(mgmt) MGMT, \(ppw) PPW! STRENGTHS \(strengths.uppercased()), WEAKNESSES \(weaknesses.uppercased())!"
+        case .robotAI:
+            return "\nDefense season: \(mgmt)%, \(ppw) PPW. Strengths \(strengths), weaknesses \(weaknesses)."
+        }
+    }
+
+    private func offenseSuggestions(team: TeamStanding, personality: StatDropPersonality) -> String {
+        let weaknesses = team.offensiveWeaknesses?.joined(separator: ", ") ?? ""
+        let suggestion = !weaknesses.isEmpty ? "Scout waivers or trades for \(weaknesses) to amp up offense." : "Offense solid - keep rolling."
+
+        switch personality {
+        case .classicESPN:
+            return "\nOffense Tips: \(suggestion)"
+        case .hypeMan:
+            return "\nOFF BOOST: GRAB \(weaknesses.uppercased()) FROM WAIVERS/TRADES - EXPLODE!"
+        case .snarkyAnalyst:
+            return "\nOffense advice: \(suggestion) Or don't, stay mediocre."
+        case .oldSchoolRadio:
+            return "\nOffense suggestions: \(suggestion)"
+        case .statGeek:
+            return "\nOffense optimization: \(suggestion)"
+        case .motivationalCoach:
+            return "\nOffense plan: \(suggestion) Go for it!"
+        case .britishCommentator:
+            return "\nOffence recommendations: \(suggestion)"
+        case .localNews:
+            return "\nLocal offense tips: \(suggestion)"
+        case .dramatic:
+            return "\nOFFENSE QUEST: \(suggestion.uppercased()) - CONQUER!"
+        case .robotAI:
+            return "\nOffense compute: \(suggestion)"
+        }
+    }
+
+    private func defenseSuggestions(team: TeamStanding, personality: StatDropPersonality) -> String {
+        let weaknesses = team.defensiveWeaknesses?.joined(separator: ", ") ?? ""
+        let suggestion = !weaknesses.isEmpty ? "Target waivers or trades for \(weaknesses) to lock down defense." : "Defense strong - maintain."
+
+        switch personality {
+        case .classicESPN:
+            return "\nDefense Tips: \(suggestion)"
+        case .hypeMan:
+            return "\nDEF LOCK: SNAG \(weaknesses.uppercased()) WAIVERS/TRADES - IMPENETRABLE!"
+        case .snarkyAnalyst:
+            return "\nDefense advice: \(suggestion) If you must."
+        case .oldSchoolRadio:
+            return "\nDefense suggestions: \(suggestion)"
+        case .statGeek:
+            return "\nDefense optimization: \(suggestion)"
+        case .motivationalCoach:
+            return "\nDefense plan: \(suggestion) Stay tough!"
+        case .britishCommentator:
+            return "\nDefence recommendations: \(suggestion)"
+        case .localNews:
+            return "\nLocal defense tips: \(suggestion)"
+        case .dramatic:
+            return "\nDEFENSE ODYSSEY: \(suggestion.uppercased()) - UNBREAKABLE!"
+        case .robotAI:
+            return "\nDefense compute: \(suggestion)"
+        }
+    }
+
+    private func offenseIntro(team: TeamStanding, personality: StatDropPersonality, stats: TeamStats) -> String {
+        switch personality {
+        case .classicESPN:
+            return "Offense Stat Drop for \(team.name): Let's break it down."
+        case .hypeMan:
+            return "OFFENSE HYPE FOR \(team.name.uppercased())!"
+        case .snarkyAnalyst:
+            return "Offense for \(team.name): Don't get too excited."
+        case .oldSchoolRadio:
+            return "Offense report for \(team.name), folks."
+        case .statGeek:
+            return "Offense stats deep dive for \(team.name)."
+        case .motivationalCoach:
+            return "Offense analysis for \(team.name) - let's improve!"
+        case .britishCommentator:
+            return "Offence overview for \(team.name)."
+        case .localNews:
+            return "Local offense update for \(team.name)."
+        case .dramatic:
+            return "THE EPIC OFFENSE OF \(team.name.uppercased())!"
+        case .robotAI:
+            return "Processing offense for \(team.name)."
+        }
+    }
+
+    private func defenseIntro(team: TeamStanding, personality: StatDropPersonality, stats: TeamStats) -> String {
+        switch personality {
+        case .classicESPN:
+            return "Defense Stat Drop for \(team.name): Let's analyze."
+        case .hypeMan:
+            return "DEFENSE HYPE FOR \(team.name.uppercased())!"
+        case .snarkyAnalyst:
+            return "Defense for \(team.name): Holes everywhere."
+        case .oldSchoolRadio:
+            return "Defense report for \(team.name), listeners."
+        case .statGeek:
+            return "Defense stats breakdown for \(team.name)."
+        case .motivationalCoach:
+            return "Defense analysis for \(team.name) - strengthen up!"
+        case .britishCommentator:
+            return "Defence overview for \(team.name)."
+        case .localNews:
+            return "Local defense update for \(team.name)."
+        case .dramatic:
+            return "THE MIGHTY DEFENSE OF \(team.name.uppercased())!"
+        case .robotAI:
+            return "Processing defense for \(team.name)."
+        }
+    }
 
     private func formatAttributedString(_ text: String) -> AttributedString {
         var attr = AttributedString(text)
@@ -668,8 +858,6 @@ extension String {
     }
 }
 
-// MARK: - Persistence + View wrapper (kept minimal, compatibility-aware)
-
 import SwiftUI
 
 struct StatDropAnalysisBox: View {
@@ -677,20 +865,16 @@ struct StatDropAnalysisBox: View {
     let league: LeagueData
     let context: StatDropContext
     let personality: StatDropPersonality
-    var opponent: TeamStanding? = nil
-    var explicitWeek: Int? = nil
 
     var body: some View {
         let attributed = StatDropPersistence.shared.getOrGenerateStatDrop(
             for: team,
             league: league,
             context: context,
-            personality: personality,
-            opponent: opponent,
-            explicitWeek: explicitWeek
+            personality: personality
         )
         VStack(alignment: .leading, spacing: 8) {
-            Text(context == .fullTeam || context == .myTeam ? "Weekly Stat Drop" : "Stat Drop Analysis")
+            Text(context == .fullTeam ? "Weekly Stat Drop" : "Stat Drop Analysis")
                 .font(.headline)
                 .foregroundColor(.yellow)
             Text(attributed)
@@ -698,74 +882,95 @@ struct StatDropAnalysisBox: View {
                 .foregroundColor(.white)
         }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.13)))
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.13))
+        )
         .padding(.vertical, 4)
     }
 }
 
-// MARK: - Persistence helper
 
+import Foundation
+
+/// Helper for persisting and scheduling weekly Stat Drop analysis.
 @MainActor final class StatDropPersistence {
     static let shared = StatDropPersistence()
     private let userDefaults = UserDefaults.standard
 
-    static var weeklyDropWeekday: Int { 3 } // Tuesday
+    /// The scheduled drop day for a new week (e.g. Tuesday).
+    /// You can customize this or make it dynamic per-league if you wish.
+    static var weeklyDropWeekday: Int { 3 } // 1 = Sunday, 2 = Monday, 3 = Tuesday...
     static var dropHour: Int { 9 } // 9am UTC
 
     private init() {}
 
+    /// Returns the current NFL/fantasy week number (1-18) based on the date and league season.
+    /// Assumes season starts on first Thursday in September of the league year.
+    /// Adjusts for the weekly drop (e.g., Tuesday reflects the just-completed week).
     func currentWeek(for date: Date = Date(), leagueSeason: String) -> Int {
-        guard let year = Int(leagueSeason) else { return 1 }
+        guard let year = Int(leagueSeason) else { return 1 } // Fallback if season not numeric
+
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)! // UTC
+
+        // Find first Thursday in September of the year
         var septFirst = DateComponents(year: year, month: 9, day: 1)
         let septFirstDate = calendar.date(from: septFirst)!
+
         var seasonStart = septFirstDate
         var weekday = calendar.component(.weekday, from: seasonStart)
-        while weekday != 5 {
+        while weekday != 5 { // 5 = Thursday (Sunday=1)
             seasonStart = calendar.date(byAdding: .day, value: 1, to: seasonStart)!
             weekday = calendar.component(.weekday, from: seasonStart)
         }
-        let adjustedDate = adjustedDateForDrop(date)
-        let daysSinceStart = calendar.dateComponents([.day], from: seasonStart, to: adjustedDate).day ?? 0
+
+        // Days since season start
+        let daysSinceStart = calendar.dateComponents([.day], from: seasonStart, to: date).day ?? 0
+
+        // Raw week = (days // 7) + 1, but cap at 18
         var rawWeek = (daysSinceStart / 7) + 1
         if rawWeek > 18 { rawWeek = 18 }
         if rawWeek < 1 { rawWeek = 1 }
-        return rawWeek
+
+        // Adjust for drop schedule: If before Tuesday 9am of the current NFL week, use previous week
+        let adjustedDate = adjustedDateForDrop(date)
+        let adjustedDays = calendar.dateComponents([.day], from: seasonStart, to: adjustedDate).day ?? 0
+        let adjustedWeek = (adjustedDays / 7) + 1
+
+        return min(max(adjustedWeek, 1), 18)
     }
 
+    /// Adjusts a date to the latest scheduled drop (e.g. most recent Tuesday 9am).
     private func adjustedDateForDrop(_ date: Date) -> Date {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
         let weekStart = calendar.date(from: components)!
+        // Find this week's Tuesday 9am
         let dropDate = calendar.date(byAdding: .day, value: StatDropPersistence.weeklyDropWeekday - 1, to: weekStart)!
         let dropDateWithHour = calendar.date(bySettingHour: StatDropPersistence.dropHour, minute: 0, second: 0, of: dropDate)!
+        // If current date is before this drop, go back one week
         if date < dropDateWithHour {
             return calendar.date(byAdding: .weekOfYear, value: -1, to: dropDateWithHour)!
         }
         return dropDateWithHour
     }
 
-    private func storageKey(leagueId: String, teamId: String, opponentId: String?, context: StatDropContext, week: Int, personality: StatDropPersonality) -> String {
-        if context == .matchup {
-            let opp = opponentId ?? "none"
-            return "statdrop.\(leagueId).\(teamId).\(opp).\(context.rawValue).\(week).\(personality.rawValue)"
-        } else {
-            return "statdrop.\(leagueId).\(teamId).\(context.rawValue).\(week).\(personality.rawValue)"
-        }
+    /// Key for storing/retrieving stat drops. Uniqueness: (league, team, context, week, personality)
+    private func storageKey(leagueId: String, teamId: String, context: StatDropContext, week: Int, personality: StatDropPersonality) -> String {
+        "statdrop.\(leagueId).\(teamId).\(context.rawValue).\(week).\(personality.rawValue)"
     }
 
+    /// Retrieves the persisted stat drop for this week, or generates and saves a new one if not present.
     func getOrGenerateStatDrop(for team: TeamStanding,
                                league: LeagueData,
                                context: StatDropContext,
-                               personality: StatDropPersonality,
-                               opponent: TeamStanding? = nil,
-                               explicitWeek: Int? = nil) -> AttributedString {
+                               personality: StatDropPersonality) -> AttributedString {
         let leagueId = league.id
         let teamId = team.id
-        let week = explicitWeek ?? currentWeek(leagueSeason: league.season)
-        let key = storageKey(leagueId: leagueId, teamId: teamId, opponentId: opponent?.id, context: context, week: week, personality: personality)
+        let week = currentWeek(leagueSeason: league.season)
+        let key = storageKey(leagueId: leagueId, teamId: teamId, context: context, week: week, personality: personality)
 
         if let savedData = userDefaults.data(forKey: key),
            let saved = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: savedData) {
@@ -777,11 +982,9 @@ struct StatDropAnalysisBox: View {
             league: league,
             week: week,
             context: context,
-            personality: personality,
-            opponent: opponent,
-            explicitWeek: explicitWeek
+            personality: personality
         )
-
+        // Persist it (as NSAttributedString)
         let nsAttr = NSAttributedString(generated)
         if let data = try? NSKeyedArchiver.archivedData(withRootObject: nsAttr, requiringSecureCoding: false) {
             userDefaults.set(data, forKey: key)
@@ -789,6 +992,7 @@ struct StatDropAnalysisBox: View {
         return generated
     }
 
+    /// Clears all persisted stat drops (for debugging or force refresh).
     func clearAll() {
         for key in userDefaults.dictionaryRepresentation().keys where key.hasPrefix("statdrop.") {
             userDefaults.removeObject(forKey: key)
